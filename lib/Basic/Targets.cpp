@@ -3911,6 +3911,17 @@ public:
   }
 };
 
+namespace {
+// Spark target
+class SparkDarwinX86_64TargetInfo : public DarwinX86_64TargetInfo {
+public:
+  SparkDarwinX86_64TargetInfo(const llvm::Triple &Triple)
+      : DarwinX86_64TargetInfo(Triple) {
+
+  }
+};
+} // end anonymous namespace
+
 class OpenBSDX86_64TargetInfo : public OpenBSDTargetInfo<X86_64TargetInfo> {
 public:
   OpenBSDX86_64TargetInfo(const llvm::Triple &Triple)
@@ -6866,6 +6877,17 @@ public:
 };
 } // end anonymous namespace
 
+namespace {
+// Spark target
+class SparkLinuxX86_64TargetInfo : public LinuxTargetInfo<X86_64TargetInfo> {
+public:
+  SparkLinuxX86_64TargetInfo(const llvm::Triple &Triple)
+      : LinuxTargetInfo<X86_64TargetInfo>(Triple) {
+
+  }
+};
+} // end anonymous namespace
+
 
 //===----------------------------------------------------------------------===//
 // Driver code
@@ -7215,8 +7237,12 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
 
   case llvm::Triple::x86_64:
     if (Triple.isOSDarwin() || Triple.isOSBinFormatMachO())
-      return new DarwinX86_64TargetInfo(Triple);
-
+      switch (Triple.getEnvironment()) {
+      default:
+        return new DarwinX86_64TargetInfo(Triple);
+      case llvm::Triple::Spark:
+        return new SparkDarwinX86_64TargetInfo(Triple);
+      }
     switch (os) {
     case llvm::Triple::CloudABI:
       return new CloudABITargetInfo<X86_64TargetInfo>(Triple);
@@ -7226,6 +7252,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
         return new LinuxTargetInfo<X86_64TargetInfo>(Triple);
       case llvm::Triple::Android:
         return new AndroidX86_64TargetInfo(Triple);
+      case llvm::Triple::Spark:
+        return new SparkLinuxX86_64TargetInfo(Triple);
       }
     }
     case llvm::Triple::DragonFly:

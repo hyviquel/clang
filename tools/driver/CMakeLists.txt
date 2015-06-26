@@ -29,6 +29,7 @@ add_clang_executable(clang
   driver.cpp
   cc1_main.cpp
   cc1as_main.cpp
+  ${INC_ALL}
   )
 
 target_link_libraries(clang
