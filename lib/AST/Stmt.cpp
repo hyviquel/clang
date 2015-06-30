@@ -193,23 +193,24 @@ Stmt::child_range Stmt::children() {
 //
 // See also Expr.cpp:getExprLoc().
 namespace {
-/// This implementation is used when a class provides a custom
-/// implementation of getSourceRange.
-template <class S, class T>
-SourceRange getSourceRangeImpl(const Stmt *stmt, SourceRange (T::*v)() const) {
-  return static_cast<const S *>(stmt)->getSourceRange();
-}
+  /// This implementation is used when a class provides a custom
+  /// implementation of getSourceRange.
+  template <class S, class T>
+  SourceRange getSourceRangeImpl(const Stmt *stmt,
+                                 SourceRange (T::*v)() const) {
+    return static_cast<const S *>(stmt)->getSourceRange();
+  }
 
-/// This implementation is used when a class doesn't provide a custom
-/// implementation of getSourceRange.  Overload resolution should pick it over
-/// the implementation above because it's more specialized according to
-/// function template partial ordering.
-template <class S>
-SourceRange getSourceRangeImpl(const Stmt *stmt,
-                               SourceRange (Stmt::*v)() const) {
-  return SourceRange(static_cast<const S *>(stmt)->getLocStart(),
-                     static_cast<const S *>(stmt)->getLocEnd());
-}
+  /// This implementation is used when a class doesn't provide a custom
+  /// implementation of getSourceRange.  Overload resolution should pick it over
+  /// the implementation above because it's more specialized according to
+  /// function template partial ordering.
+  template <class S>
+  SourceRange getSourceRangeImpl(const Stmt *stmt,
+                                 SourceRange (Stmt::*v)() const) {
+    return SourceRange(static_cast<const S*>(stmt)->getLocStart(),
+                       static_cast<const S*>(stmt)->getLocEnd());
+  }
 }
 
 SourceRange Stmt::getSourceRange() const {

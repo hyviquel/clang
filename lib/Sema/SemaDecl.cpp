@@ -1804,7 +1804,8 @@ static void filterNonConflictingPreviousDecls(Sema &S,
                                               NamedDecl *decl,
                                               LookupResult &previous){
   // This is only interesting when modules are enabled.
-  if (!S.getLangOpts().Modules && !S.getLangOpts().ModulesLocalVisibility)
+  if ((!S.getLangOpts().Modules && !S.getLangOpts().ModulesLocalVisibility) ||
+      !S.getLangOpts().ModulesHideInternalLinkage)
     return;
 
   // Empty sets are uninteresting.
@@ -2471,17 +2472,18 @@ static void mergeParamDeclTypes(ParmVarDecl *NewParam,
   if (auto Oldnullability = OldParam->getType()->getNullability(S.Context)) {
     if (auto Newnullability = NewParam->getType()->getNullability(S.Context)) {
       if (*Oldnullability != *Newnullability) {
-        unsigned unsNewnullability = static_cast<unsigned>(*Newnullability);
-        unsigned unsOldnullability = static_cast<unsigned>(*Oldnullability);
         S.Diag(NewParam->getLocation(), diag::warn_mismatched_nullability_attr)
-          << unsNewnullability
-          << ((NewParam->getObjCDeclQualifier() & Decl::OBJC_TQ_CSNullability) != 0)
-          << unsOldnullability
-          << ((OldParam->getObjCDeclQualifier() & Decl::OBJC_TQ_CSNullability) != 0);
+          << DiagNullabilityKind(
+               *Newnullability,
+               ((NewParam->getObjCDeclQualifier() & Decl::OBJC_TQ_CSNullability)
+                != 0))
+          << DiagNullabilityKind(
+               *Oldnullability,
+               ((OldParam->getObjCDeclQualifier() & Decl::OBJC_TQ_CSNullability)
+                != 0));
         S.Diag(OldParam->getLocation(), diag::note_previous_declaration);
       }
-    }
-    else {
+    } else {
       QualType NewT = NewParam->getType();
       NewT = S.Context.getAttributedType(
                          AttributedType::getNullabilityAttrKind(*Oldnullability),
@@ -3454,8 +3456,9 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
       New->isThisDeclarationADefinition() == VarDecl::Definition &&
       (Def = Old->getDefinition())) {
     NamedDecl *Hidden = nullptr;
-    if (!hasVisibleDefinition(Def, &Hidden) && 
-        (New->getDescribedVarTemplate() ||
+    if (!hasVisibleDefinition(Def, &Hidden) &&
+        (New->getFormalLinkage() == InternalLinkage ||
+         New->getDescribedVarTemplate() ||
          New->getNumTemplateParameterLists() ||
          New->getDeclContext()->isDependentContext())) {
       // The previous definition is hidden, and multiple definitions are
@@ -5530,6 +5533,19 @@ bool Sema::adjustContextForLocalExternDecl(DeclContext *&DC) {
   return true;
 }
 
+/// \brief Returns true if given declaration is TU-scoped and externally
+/// visible.
+static bool isDeclTUScopedExternallyVisible(const Decl *D) {
+  if (auto *FD = dyn_cast<FunctionDecl>(D))
+    return (FD->getDeclContext()->isTranslationUnit() || FD->isExternC()) &&
+           FD->hasExternalFormalLinkage();
+  else if (auto *VD = dyn_cast<VarDecl>(D))
+    return (VD->getDeclContext()->isTranslationUnit() || VD->isExternC()) &&
+           VD->hasExternalFormalLinkage();
+
+  llvm_unreachable("Unknown type of decl!");
+}
+
 NamedDecl *
 Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                               TypeSourceInfo *TInfo, LookupResult &Previous,
@@ -5954,7 +5970,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
     NewVD->addAttr(::new (Context) AsmLabelAttr(SE->getStrTokenLoc(0),
                                                 Context, Label, 0));
-  } else if (!ExtnameUndeclaredIdentifiers.empty()) {
+  } else if (!ExtnameUndeclaredIdentifiers.empty() &&
+             isDeclTUScopedExternallyVisible(NewVD)) {
     llvm::DenseMap<IdentifierInfo*,AsmLabelAttr*>::iterator I =
       ExtnameUndeclaredIdentifiers.find(NewVD->getIdentifier());
     if (I != ExtnameUndeclaredIdentifiers.end()) {
@@ -7195,6 +7212,11 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
           dyn_cast<CXXRecordDecl>(NewFD->getDeclContext())) {
       if (Parent->isInterface() && cast<CXXMethodDecl>(NewFD)->isUserProvided())
         NewFD->setPure(true);
+
+      // C++ [class.union]p2
+      //   A union can have member functions, but not virtual functions.
+      if (isVirtual && Parent->isUnion())
+        Diag(D.getDeclSpec().getVirtualSpecLoc(), diag::err_virtual_in_union);
     }
 
     SetNestedNameSpecifier(NewFD, D);
@@ -7478,7 +7500,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     StringLiteral *SE = cast<StringLiteral>(E);
     NewFD->addAttr(::new (Context) AsmLabelAttr(SE->getStrTokenLoc(0), Context,
                                                 SE->getString(), 0));
-  } else if (!ExtnameUndeclaredIdentifiers.empty()) {
+  } else if (!ExtnameUndeclaredIdentifiers.empty() &&
+             isDeclTUScopedExternallyVisible(NewFD)) {
     llvm::DenseMap<IdentifierInfo*,AsmLabelAttr*>::iterator I =
       ExtnameUndeclaredIdentifiers.find(NewFD->getIdentifier());
     if (I != ExtnameUndeclaredIdentifiers.end()) {
@@ -8784,18 +8807,10 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   }
 
   if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(RealDecl)) {
-    // With declarators parsed the way they are, the parser cannot
-    // distinguish between a normal initializer and a pure-specifier.
-    // Thus this grotesque test.
-    IntegerLiteral *IL;
-    if ((IL = dyn_cast<IntegerLiteral>(Init)) && IL->getValue() == 0 &&
-        Context.getCanonicalType(IL->getType()) == Context.IntTy)
-      CheckPureMethod(Method, Init->getSourceRange());
-    else {
-      Diag(Method->getLocation(), diag::err_member_function_initialization)
-        << Method->getDeclName() << Init->getSourceRange();
-      Method->setInvalidDecl();
-    }
+    // Pure-specifiers are handled in ActOnPureSpecifier.
+    Diag(Method->getLocation(), diag::err_member_function_initialization)
+      << Method->getDeclName() << Init->getSourceRange();
+    Method->setInvalidDecl();
     return;
   }
 
@@ -8958,7 +8973,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   if ((Def = VDecl->getDefinition()) && Def != VDecl) {
     NamedDecl *Hidden = nullptr;
     if (!hasVisibleDefinition(Def, &Hidden) && 
-        (VDecl->getDescribedVarTemplate() ||
+        (VDecl->getFormalLinkage() == InternalLinkage ||
+         VDecl->getDescribedVarTemplate() ||
          VDecl->getNumTemplateParameterLists() ||
          VDecl->getDeclContext()->isDependentContext())) {
       // The previous definition is hidden, and multiple definitions are
@@ -10379,7 +10395,8 @@ Sema::CheckForFunctionRedefinition(FunctionDecl *FD,
   // in this case? That may be necessary for functions that return local types
   // through a deduced return type, or instantiate templates with local types.
   if (!hasVisibleDefinition(Definition) &&
-      (Definition->isInlineSpecified() ||
+      (Definition->getFormalLinkage() == InternalLinkage ||
+       Definition->isInlineSpecified() ||
        Definition->getDescribedFunctionTemplate() ||
        Definition->getNumTemplateParameterLists()))
     return;
