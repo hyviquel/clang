@@ -409,12 +409,12 @@ static void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
 
   lksf << "  }\n";
   // Add commands to define host entries begin and end
-  lksf << "  .openmptgt_host_entries :\n";
+  lksf << "  .omptgt_hst_entr :\n";
   lksf << "  ALIGN(0x10)\n";
   lksf << "  SUBALIGN(0x01)\n";
   lksf << "  {\n";
   lksf << "    PROVIDE_HIDDEN(__omptgt__host_entries_begin = .);\n";
-  lksf << "    *(.openmptgt_host_entries)\n";
+  lksf << "    *(.omptgt_hst_entr)\n";
   lksf << "    PROVIDE_HIDDEN(__omptgt__host_entries_end = .);\n";
   lksf << "  }\n";
   lksf << "}\n";

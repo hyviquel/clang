@@ -21,6 +21,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/Triple.h"
 
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -1198,6 +1199,13 @@ llvm::Constant* CGOpenMPRuntime::GetDeviceImageEndPointer(
           + Twine(LegalizeTripleString(TargetTriple)));
 }
 
+/// Return a string with the section name.
+///
+std::string CGOpenMPRuntime::GetSectionName() const {
+  bool isMachO = llvm::Triple(CGM.getModule().getTargetTriple()).isOSBinFormatMachO();
+  return isMachO ? "__DATA,.omptgt_hst_entr" : ".omptgt_hst_entr";
+}
+
 /// Return a string with the mangled name of a target region for the given
 /// module and target region index
 ///
@@ -1602,7 +1610,7 @@ llvm::GlobalVariable *CGOpenMPRuntime::CreateHostPtrForCurrentTargetRegion(
       Twine(Name) + Twine("_entry"));
 
   // The entry has to be created in the section the linker expects it to be
-  Entry->setSection(".openmptgt_host_entries");
+  Entry->setSection(GetSectionName());
   // We can't have any padding between symbols, so we need to have 1-byte
   // alignment
   Entry->setAlignment(1);
@@ -1664,9 +1672,8 @@ llvm::GlobalVariable *CGOpenMPRuntime::CreateHostEntryForTargetGlobal(
   llvm::GlobalVariable *Entry = new llvm::GlobalVariable(
       M, EntryTy, true, llvm::GlobalValue::ExternalLinkage, EntryInit,
       Twine(Name) + Twine("_entry"));
-
   // The entry has to be created in the section the linker expects it to be
-  Entry->setSection(".openmptgt_host_entries");
+  Entry->setSection(GetSectionName());
   // We can't have any padding between symbols, so we need to have 1-byte
   // alignment
   Entry->setAlignment(1);

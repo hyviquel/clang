@@ -489,6 +489,9 @@ public:
                                                CodeGenFunction &CGF,
                                                bool NoCast = false);
 
+  /// Get the section name for host.
+  std::string GetSectionName() const;
+
   /// \brief  Return a string with the mangled name of a target region or global
   /// entry point. The client can choose to invalidate the used order entry.
   ///
