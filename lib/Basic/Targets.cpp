@@ -759,6 +759,7 @@ public:
       HasP8Crypto(false), HasDirectMove(false), HasQPX(false), HasHTM(false),
       HasBPERMD(false), HasExtDiv(false) {
     BigEndian = (Triple.getArch() != llvm::Triple::ppc64le);
+    SimdDefaultAlign = 128;
     LongDoubleWidth = LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::PPCDoubleDouble;
   }
@@ -2739,7 +2740,11 @@ void X86TargetInfo::setXOPLevel(llvm::StringMap<bool> &Features, XOPEnum Level,
 
 void X86TargetInfo::setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
                                           StringRef Name, bool Enabled) {
-  Features[Name] = Enabled;
+  // This is a bit of a hack to deal with the sse4 target feature when used
+  // as part of the target attribute. We handle sse4 correctly everywhere
+  // else. See below for more information on how we handle the sse4 options.
+  if (Name != "sse4")
+    Features[Name] = Enabled;
 
   if (Name == "mmx") {
     setMMXLevel(Features, MMX, Enabled);
@@ -2790,6 +2795,15 @@ void X86TargetInfo::setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
   } else if (Name == "sha") {
     if (Enabled)
       setSSELevel(Features, SSE2, Enabled);
+  } else if (Name == "sse4") {
+    // We can get here via the __target__ attribute since that's not controlled
+    // via the -msse4/-mno-sse4 command line alias. Handle this the same way
+    // here - turn on the sse4.2 if enabled, turn off the sse4.1 level if
+    // disabled.
+    if (Enabled)
+      setSSELevel(Features, SSE42, Enabled);
+    else
+      setSSELevel(Features, SSE41, Enabled);
   }
 }
 
@@ -2986,6 +3000,9 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     Features.erase(it);
   else if (SSELevel > NoSSE)
     MMX3DNowLevel = std::max(MMX3DNowLevel, MMX);
+
+  SimdDefaultAlign =
+      (getABI() == "avx512") ? 512 : (getABI() == "avx") ? 256 : 128;
   return true;
 }
 
@@ -4229,7 +4246,9 @@ public:
     // zero length bitfield.
     UseZeroLengthBitfieldAlignment = true;
   }
+
   StringRef getABI() const override { return ABI; }
+
   bool setABI(const std::string &Name) override {
     ABI = Name;
 

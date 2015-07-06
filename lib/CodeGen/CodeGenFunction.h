@@ -465,12 +465,12 @@ public:
   /// Header for data within LifetimeExtendedCleanupStack.
   struct LifetimeExtendedCleanupHeader {
     /// The size of the following cleanup object.
-    unsigned Size : 29;
+    unsigned Size;
     /// The kind of cleanup to push: a value from the CleanupKind enumeration.
-    unsigned Kind : 3;
+    CleanupKind Kind;
 
-    size_t getSize() const { return size_t(Size); }
-    CleanupKind getKind() const { return static_cast<CleanupKind>(Kind); }
+    size_t getSize() const { return Size; }
+    CleanupKind getKind() const { return Kind; }
   };
 
   /// i32s containing the indexes of the cleanup destinations.
@@ -570,6 +570,8 @@ public:
     LifetimeExtendedCleanupStack.resize(
         LifetimeExtendedCleanupStack.size() + sizeof(Header) + Header.Size);
 
+    static_assert(sizeof(Header) % llvm::AlignOf<T>::Alignment == 0,
+                  "Cleanup will be allocated on misaligned address");
     char *Buffer = &LifetimeExtendedCleanupStack[OldSize];
     new (Buffer) LifetimeExtendedCleanupHeader(Header);
     new (Buffer + sizeof(Header)) T(A...);
@@ -1422,8 +1424,9 @@ public:
   void GenerateThunk(llvm::Function *Fn, const CGFunctionInfo &FnInfo,
                      GlobalDecl GD, const ThunkInfo &Thunk);
 
-  void GenerateVarArgsThunk(llvm::Function *Fn, const CGFunctionInfo &FnInfo,
-                            GlobalDecl GD, const ThunkInfo &Thunk);
+  llvm::Function *GenerateVarArgsThunk(llvm::Function *Fn,
+                                       const CGFunctionInfo &FnInfo,
+                                       GlobalDecl GD, const ThunkInfo &Thunk);
 
   void EmitCtorPrologue(const CXXConstructorDecl *CD, CXXCtorType Type,
                         FunctionArgList &Args);
@@ -3030,6 +3033,10 @@ public:
   /// \brief Create a basic block that will call the trap intrinsic, and emit a
   /// conditional branch to it, for the -ftrapv checks.
   void EmitTrapCheck(llvm::Value *Checked);
+
+  /// \brief Emit a call to trap or debugtrap and attach function attribute
+  /// "trap-func-name" if specified.
+  llvm::CallInst *EmitTrapCall(llvm::Intrinsic::ID IntrID);
 
   /// \brief Create a check for a function parameter that may potentially be
   /// declared as non-null.

@@ -1599,8 +1599,8 @@ void ASTDumper::dumpStmt(const Stmt *S) {
     }
 
     ConstStmtVisitor<ASTDumper>::Visit(S);
-    for (Stmt::const_child_range CI = S->children(); CI; ++CI)
-      dumpStmt(*CI);
+    for (const Stmt *SubStmt : S->children())
+      dumpStmt(SubStmt);
     if (const CapturedStmt *CS = dyn_cast<CapturedStmt>(S))
       dumpStmt(CS->getCapturedStmt());
   });
@@ -1854,6 +1854,9 @@ void ASTDumper::VisitUnaryExprOrTypeTraitExpr(
     break;
   case UETT_VecStep:
     OS << " vec_step";
+    break;
+  case UETT_OpenMPRequiredSimdAlign:
+    OS << " __builtin_omp_required_simd_align";
     break;
   }
   if (Node->isArgumentType())
