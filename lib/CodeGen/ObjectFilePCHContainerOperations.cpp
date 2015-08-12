@@ -58,7 +58,7 @@ public:
                         const std::string &OutputFileName,
                         raw_pwrite_stream *OS,
                         std::shared_ptr<PCHBuffer> Buffer)
-      : Diags(diags), HeaderSearchOpts(HSO), PreprocessorOpts(PPO),
+      : Diags(diags), Ctx(nullptr), HeaderSearchOpts(HSO), PreprocessorOpts(PPO),
         TargetOpts(TO), LangOpts(LO), OS(OS), Buffer(Buffer) {
     // The debug info output isn't affected by CodeModel and
     // ThreadModel, but the backend expects them to be nonempty.
@@ -71,13 +71,17 @@ public:
   virtual ~PCHContainerGenerator() {}
 
   void Initialize(ASTContext &Context) override {
+    if (Ctx) {
+      assert(Ctx == &Context);
+      return;
+    }
+
     Ctx = &Context;
     VMContext.reset(new llvm::LLVMContext());
     M.reset(new llvm::Module(MainFileName, *VMContext));
-    M->setDataLayout(Ctx->getTargetInfo().getTargetDescription());
-    Builder.reset(new CodeGen::CodeGenModule(*Ctx, HeaderSearchOpts,
-                                             PreprocessorOpts, CodeGenOpts, *M,
-                                             M->getDataLayout(), Diags));
+    M->setDataLayout(Ctx->getTargetInfo().getDataLayoutString());
+    Builder.reset(new CodeGen::CodeGenModule(
+        *Ctx, HeaderSearchOpts, PreprocessorOpts, CodeGenOpts, *M, Diags));
   }
 
   /// Emit a container holding the serialized AST.
@@ -92,7 +96,7 @@ public:
       return;
 
     M->setTargetTriple(Ctx.getTargetInfo().getTriple().getTriple());
-    M->setDataLayout(Ctx.getTargetInfo().getTargetDescription());
+    M->setDataLayout(Ctx.getTargetInfo().getDataLayoutString());
 
     // Finalize the Builder.
     if (Builder)
@@ -133,7 +137,7 @@ public:
       llvm::SmallString<0> Buffer;
       llvm::raw_svector_ostream OS(Buffer);
       clang::EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
-                               Ctx.getTargetInfo().getTargetDescription(),
+                               Ctx.getTargetInfo().getDataLayoutString(),
                                M.get(), BackendAction::Backend_EmitLL, &OS);
       OS.flush();
       llvm::dbgs() << Buffer;
@@ -141,7 +145,7 @@ public:
 
     // Use the LLVM backend to emit the pch container.
     clang::EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
-                             Ctx.getTargetInfo().getTargetDescription(),
+                             Ctx.getTargetInfo().getDataLayoutString(),
                              M.get(), BackendAction::Backend_EmitObj, OS);
 
     // Make sure the pch container hits disk.
@@ -156,7 +160,7 @@ public:
 } // namespace
 
 std::unique_ptr<ASTConsumer>
-ObjectFilePCHContainerOperations::CreatePCHContainerGenerator(
+ObjectFilePCHContainerWriter::CreatePCHContainerGenerator(
     DiagnosticsEngine &Diags, const HeaderSearchOptions &HSO,
     const PreprocessorOptions &PPO, const TargetOptions &TO,
     const LangOptions &LO, const std::string &MainFileName,
@@ -166,7 +170,7 @@ ObjectFilePCHContainerOperations::CreatePCHContainerGenerator(
       Diags, HSO, PPO, TO, LO, MainFileName, OutputFileName, OS, Buffer);
 }
 
-void ObjectFilePCHContainerOperations::ExtractPCH(
+void ObjectFilePCHContainerReader::ExtractPCH(
     llvm::MemoryBufferRef Buffer, llvm::BitstreamReader &StreamFile) const {
   if (auto OF = llvm::object::ObjectFile::createObjectFile(Buffer)) {
     auto *Obj = OF.get().get();

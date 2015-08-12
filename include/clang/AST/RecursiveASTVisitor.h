@@ -2379,8 +2379,8 @@ public:
   RecursiveOMPClauseVisitor(RecursiveASTVisitor<T> *V) : Visitor(V) { }
 #define OPENMP_CLAUSE(Name, Class)                                      \
   bool Visit##Class(Class *S) {                                         \
-    for (Stmt::child_range Range = S->children(); Range; ++Range) {     \
-      if (!Visitor->TraverseStmt(*Range)) return false;                 \
+    for (Stmt *CS : S->children()) {                                    \
+      if (!Visitor->TraverseStmt(CS)) return false;                     \
     }                                                                   \
     return true;                                                        \
   }
@@ -2532,6 +2532,12 @@ DEF_TRAVERSE_STMT(OMPTargetDataDirective, {
 DEF_TRAVERSE_STMT(OMPTargetUpdateDirective, {
   return TraverseOMPExecutableDirective(S);
 })
+
+DEF_TRAVERSE_STMT(OMPTargetEnterDataDirective,
+                  { return TraverseOMPExecutableDirective(S); })
+
+DEF_TRAVERSE_STMT(OMPTargetExitDataDirective,
+                  { return TraverseOMPExecutableDirective(S); })
 
 DEF_TRAVERSE_STMT(OMPTargetTeamsDirective, {
   return TraverseOMPExecutableDirective(S);

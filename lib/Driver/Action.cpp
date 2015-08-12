@@ -25,6 +25,8 @@ const char *Action::getClassName(ActionClass AC) {
   case InputClass: return "input";
   case BindArchClass: return "bind-arch";
   case BindTargetClass: return "bind-target";
+  case CudaDeviceClass: return "cuda-device";
+  case CudaHostClass: return "cuda-host";
   case PreprocessJobClass: return "preprocessor";
   case PrecompileJobClass: return "precompiler";
   case AnalyzeJobClass: return "analyzer";
@@ -59,6 +61,25 @@ void BindTargetAction::anchor() {}
 BindTargetAction::BindTargetAction(std::unique_ptr<Action> Input, const char *_TargetName)
   : Action(BindTargetClass, std::move(Input)), TargetName(_TargetName) {
   setOffloadingDevice(_TargetName);
+}
+
+void CudaDeviceAction::anchor() {}
+
+CudaDeviceAction::CudaDeviceAction(std::unique_ptr<Action> Input,
+                                   const char *ArchName,
+                                   const char *DeviceTriple, bool AtTopLevel)
+    : Action(CudaDeviceClass, std::move(Input)), GpuArchName(ArchName),
+      DeviceTriple(DeviceTriple), AtTopLevel(AtTopLevel) {}
+
+void CudaHostAction::anchor() {}
+
+CudaHostAction::CudaHostAction(std::unique_ptr<Action> Input,
+                               const ActionList &DeviceActions)
+    : Action(CudaHostClass, std::move(Input)), DeviceActions(DeviceActions) {}
+
+CudaHostAction::~CudaHostAction() {
+  for (auto &DA : DeviceActions)
+    delete DA;
 }
 
 void JobAction::anchor() {}
@@ -141,13 +162,6 @@ VerifyJobAction::VerifyJobAction(ActionClass Kind,
     : JobAction(Kind, std::move(Input), Type) {
   assert((Kind == VerifyDebugInfoJobClass || Kind == VerifyPCHJobClass) &&
          "ActionClass is not a valid VerifyJobAction");
-}
-
-VerifyJobAction::VerifyJobAction(ActionClass Kind, ActionList &Inputs,
-                                 types::ID Type)
-    : JobAction(Kind, Inputs, Type) {
-  assert((Kind == VerifyDebugInfoJobClass || Kind == VerifyPCHJobClass) &&
-           "ActionClass is not a valid VerifyJobAction");
 }
 
 void VerifyDebugInfoJobAction::anchor() {}

@@ -321,6 +321,7 @@ CodeGenFunction::AddInitializerToStaticVarDecl(const VarDecl &D,
                                   OldGV->getThreadLocalMode(),
                            CGM.getContext().getTargetAddressSpace(D.getType()));
     GV->setVisibility(OldGV->getVisibility());
+    GV->setComdat(OldGV->getComdat());
 
     // Steal the name of the old global
     GV->takeName(OldGV);
@@ -998,7 +999,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       llvm::Value *Stack = CreateTempAlloca(Int8PtrTy, "saved_stack");
 
       llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::stacksave);
-      llvm::Value *V = Builder.CreateCall(F, {});
+      llvm::Value *V = Builder.CreateCall(F);
 
       Builder.CreateStore(V, Stack);
 

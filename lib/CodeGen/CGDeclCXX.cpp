@@ -522,6 +522,19 @@ void CodeGenModule::EmitOMPRegisterLib() {
     CGF.StartFunction(GlobalDecl(), CGF.getContext().VoidTy, TRD_F,
         CGF.getTypes().arrangeNullaryFunction(), FunctionArgList());
     CGF.Builder.CreateCall(OpenMPRuntime->Get_register_lib(),TRD);
+
+    // FIXME: Try to get rid of these declaration, it has no use here other
+    // that registering a name
+    IdentifierInfo &II = getContext().Idents.get("__omptgt__unregister_lib");
+    VarDecl *DummyD = VarDecl::Create(
+        CGF.getContext(), nullptr, SourceLocation(), SourceLocation(), &II,
+        CGF.getContext().VoidPtrTy,
+        CGF.getContext().getTrivialTypeSourceInfo(CGF.getContext().VoidPtrTy),
+        SC_Static);
+
+    CGF.CGM.getCXXABI().registerGlobalDtor(
+        CGF, *DummyD, OpenMPRuntime->Get_unregister_lib(), TRD);
+
     CGF.FinishFunction();
   }
 
@@ -769,7 +782,8 @@ void CodeGenModule::CreateOpenMPCXXInit(const VarDecl *Var,
 //                                                   AggValueSlot::IsNotAliased));
 //    //CGF.EmitCXXConstructorCall(CtorDecl, Ctor_Complete, false, false,
 //    //                           Fn->arg_begin(), 0, 0);
-    llvm::Value *Arg = CGF.EmitScalarConversion(Fn->arg_begin(), getContext().VoidPtrTy, getContext().getPointerType(Var->getType()));
+    llvm::Value *Arg = CGF.EmitScalarConversion(Fn->arg_begin(), getContext().VoidPtrTy,
+                         getContext().getPointerType(Var->getType()), SourceLocation());
     CGF.EmitAnyExprToMem(Init, Arg, Init->getType().getQualifiers(), true);
     CGF.Builder.CreateStore(Fn->arg_begin(), CGF.ReturnValue);
     CGF.FinishFunction();
@@ -942,7 +956,8 @@ void CodeGenModule::CreateOpenMPArrCXXInit(const VarDecl *Var,
 //                                          AggValueSlot::DoesNotNeedGCBarriers,
 //                                          AggValueSlot::IsNotAliased));
 //    CGF.Builder.CreateStore(Fn->arg_begin(), CGF.ReturnValue);
-    llvm::Value *Arg = CGF.EmitScalarConversion(Fn->arg_begin(), getContext().VoidPtrTy, getContext().getPointerType(Var->getType()));
+    llvm::Value *Arg = CGF.EmitScalarConversion(Fn->arg_begin(), getContext().VoidPtrTy,
+                         getContext().getPointerType(Var->getType()), SourceLocation());
     CGF.EmitAnyExprToMem(Init, Arg, Init->getType().getQualifiers(), true);
     CGF.Builder.CreateStore(Fn->arg_begin(), CGF.ReturnValue);
     CGF.FinishFunction();

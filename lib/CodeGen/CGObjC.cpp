@@ -390,7 +390,7 @@ RValue CodeGenFunction::EmitObjCMessageExpr(const ObjCMessageExpr *E,
   QualType ResultType = method ? method->getReturnType() : E->getType();
 
   CallArgList Args;
-  EmitCallArgs(Args, method, E->arg_begin(), E->arg_end());
+  EmitCallArgs(Args, method, E->arguments());
 
   // For delegate init calls in ARC, do an unsafe store of null into
   // self.  This represents the call taking direct ownership of that
@@ -2009,7 +2009,7 @@ CodeGenFunction::EmitARCRetainAutoreleasedReturnValue(llvm::Value *value) {
 
   // Call the marker asm if we made one, which we do only at -O0.
   if (marker)
-    Builder.CreateCall(marker, {});
+    Builder.CreateCall(marker);
 
   return emitARCValueOperation(*this, value,
                      CGM.getARCEntrypoints().objc_retainAutoreleasedReturnValue,

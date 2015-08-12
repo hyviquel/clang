@@ -192,6 +192,12 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::OMPTargetDataDirectiveClass:
     EmitOMPTargetDataDirective(cast<OMPTargetDataDirective>(*S));
     break;
+  case Stmt::OMPTargetEnterDataDirectiveClass:
+    EmitOMPTargetEnterDataDirective(cast<OMPTargetEnterDataDirective>(*S));
+    break;
+  case Stmt::OMPTargetExitDataDirectiveClass:
+    EmitOMPTargetExitDataDirective(cast<OMPTargetExitDataDirective>(*S));
+    break;
   case Stmt::OMPTargetUpdateDirectiveClass:
     EmitOMPTargetUpdateDirective(cast<OMPTargetUpdateDirective>(*S));
     break;
@@ -651,107 +657,14 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
   EmitBlock(ContBlock, true);
 }
 
-void CodeGenFunction::EmitCondBrHints(llvm::LLVMContext &Context,
-                                      llvm::BranchInst *CondBr,
-                                      ArrayRef<const Attr *> Attrs) {
-  // Return if there are no hints.
-  if (Attrs.empty())
-    return;
-
-  // Add vectorize and unroll hints to the metadata on the conditional branch.
-  //
-  // FIXME: Should this really start with a size of 1?
-  SmallVector<llvm::Metadata *, 2> Metadata(1);
-  for (const auto *Attr : Attrs) {
-    const LoopHintAttr *LH = dyn_cast<LoopHintAttr>(Attr);
-
-    // Skip non loop hint attributes
-    if (!LH)
-      continue;
-
-    LoopHintAttr::OptionType Option = LH->getOption();
-    LoopHintAttr::LoopHintState State = LH->getState();
-    const char *MetadataName;
-    switch (Option) {
-    case LoopHintAttr::Vectorize:
-    case LoopHintAttr::VectorizeWidth:
-      MetadataName = "llvm.loop.vectorize.width";
-      break;
-    case LoopHintAttr::Interleave:
-    case LoopHintAttr::InterleaveCount:
-      MetadataName = "llvm.loop.interleave.count";
-      break;
-    case LoopHintAttr::Unroll:
-      // With the unroll loop hint, a non-zero value indicates full unrolling.
-      MetadataName = State == LoopHintAttr::Disable ? "llvm.loop.unroll.disable"
-                                                    : "llvm.loop.unroll.full";
-      break;
-    case LoopHintAttr::UnrollCount:
-      MetadataName = "llvm.loop.unroll.count";
-      break;
-    }
-
-    Expr *ValueExpr = LH->getValue();
-    int ValueInt = 1;
-    if (ValueExpr) {
-      llvm::APSInt ValueAPS =
-          ValueExpr->EvaluateKnownConstInt(CGM.getContext());
-      ValueInt = static_cast<int>(ValueAPS.getSExtValue());
-    }
-
-    llvm::Constant *Value;
-    llvm::MDString *Name;
-    switch (Option) {
-    case LoopHintAttr::Vectorize:
-    case LoopHintAttr::Interleave:
-      if (State != LoopHintAttr::Disable) {
-        // FIXME: In the future I will modifiy the behavior of the metadata
-        // so we can enable/disable vectorization and interleaving separately.
-        Name = llvm::MDString::get(Context, "llvm.loop.vectorize.enable");
-        Value = Builder.getTrue();
-        break;
-      }
-      // Vectorization/interleaving is disabled, set width/count to 1.
-      ValueInt = 1;
-      // Fallthrough.
-    case LoopHintAttr::VectorizeWidth:
-    case LoopHintAttr::InterleaveCount:
-    case LoopHintAttr::UnrollCount:
-      Name = llvm::MDString::get(Context, MetadataName);
-      Value = llvm::ConstantInt::get(Int32Ty, ValueInt);
-      break;
-    case LoopHintAttr::Unroll:
-      Name = llvm::MDString::get(Context, MetadataName);
-      Value = nullptr;
-      break;
-    }
-
-    SmallVector<llvm::Metadata *, 2> OpValues;
-    OpValues.push_back(Name);
-    if (Value)
-      OpValues.push_back(llvm::ConstantAsMetadata::get(Value));
-
-    // Set or overwrite metadata indicated by Name.
-    Metadata.push_back(llvm::MDNode::get(Context, OpValues));
-  }
-
-  // FIXME: This condition is never false.  Should it be an assert?
-  if (!Metadata.empty()) {
-    // Add llvm.loop MDNode to CondBr.
-    llvm::MDNode *LoopID = llvm::MDNode::get(Context, Metadata);
-    LoopID->replaceOperandWith(0, LoopID); // First op points to itself.
-
-    CondBr->setMetadata("llvm.loop", LoopID);
-  }
-}
-
 void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
                                     ArrayRef<const Attr *> WhileAttrs) {
   // Emit the header for the loop, which will also become
   // the continue target.
   JumpDest LoopHeader = getJumpDestInCurrentScope("while.cond");
   EmitBlock(LoopHeader.getBlock());
-  LoopStack.push(LoopHeader.getBlock(), WhileAttrs);
+
+  LoopStack.push(LoopHeader.getBlock(), CGM.getContext(), WhileAttrs);
 
   // Create an exit block for when the condition fails, which will
   // also become the break target.
@@ -790,7 +703,7 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
     llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
     if (ConditionScope.requiresCleanups())
       ExitBlock = createBasicBlock("while.exit");
-    llvm::BranchInst *CondBr = Builder.CreateCondBr(
+    Builder.CreateCondBr(
         BoolCondVal, LoopBody, ExitBlock,
         createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
 
@@ -798,9 +711,6 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
       EmitBlock(ExitBlock);
       EmitBranchThroughCleanup(LoopExit);
     }
-
-    // Attach metadata to loop body conditional branch.
-    EmitCondBrHints(LoopBody->getContext(), CondBr, WhileAttrs);
   }
 
   // Emit the loop body.  We have to emit this in a cleanup scope
@@ -821,7 +731,7 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
   // Branch to the loop header again.
   EmitBranch(LoopHeader.getBlock());
 
-  LoopStack.Pop();
+  LoopStack.pop();
 
   // Emit the exit block.
   EmitBlock(LoopExit.getBlock(), true);
@@ -844,7 +754,8 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S,
 
   // Emit the body of the loop.
   llvm::BasicBlock *LoopBody = createBasicBlock("do.body");
-  LoopStack.push(LoopBody, DoAttrs);
+
+  LoopStack.push(LoopBody, CGM.getContext(), DoAttrs);
 
   EmitBlockWithFallThrough(LoopBody, &S);
   {
@@ -874,15 +785,12 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S,
   // As long as the condition is true, iterate the loop.
   if (EmitBoolCondBranch) {
     uint64_t BackedgeCount = getProfileCount(S.getBody()) - ParentCount;
-    llvm::BranchInst *CondBr = Builder.CreateCondBr(
+    Builder.CreateCondBr(
         BoolCondVal, LoopBody, LoopExit.getBlock(),
         createProfileWeightsForLoop(S.getCond(), BackedgeCount));
-
-    // Attach metadata to loop body conditional branch.
-    EmitCondBrHints(LoopBody->getContext(), CondBr, DoAttrs);
   }
 
-  LoopStack.Pop();
+  LoopStack.pop();
 
   // Emit the exit block.
   EmitBlock(LoopExit.getBlock());
@@ -909,7 +817,8 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
   JumpDest Continue = getJumpDestInCurrentScope("for.cond");
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
-  LoopStack.push(CondBlock, ForAttrs);
+
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create
@@ -943,12 +852,9 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
     // C99 6.8.5p2/p4: The first substatement is executed if the expression
     // compares unequal to 0.  The condition must be a scalar type.
     llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
-    llvm::BranchInst *CondBr = Builder.CreateCondBr(
+    Builder.CreateCondBr(
         BoolCondVal, ForBody, ExitBlock,
         createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
-
-    // Attach metadata to loop body conditional branch.
-    EmitCondBrHints(ForBody->getContext(), CondBr, ForAttrs);
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
@@ -984,7 +890,7 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
 
   ForScope.ForceCleanup();
 
-  LoopStack.Pop();
+  LoopStack.pop();
 
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
@@ -1007,7 +913,7 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
   llvm::BasicBlock *CondBlock = createBasicBlock("for.cond");
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, ForAttrs);
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
 
   // If there are any cleanups between here and the loop-exit scope,
   // create a block to stage a loop exit along.
@@ -1021,12 +927,9 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
   // The body is executed if the expression, contextually converted
   // to bool, is true.
   llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
-  llvm::BranchInst *CondBr = Builder.CreateCondBr(
+  Builder.CreateCondBr(
       BoolCondVal, ForBody, ExitBlock,
       createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
-
-  // Attach metadata to loop body conditional branch.
-  EmitCondBrHints(ForBody->getContext(), CondBr, ForAttrs);
 
   if (ExitBlock != LoopExit.getBlock()) {
     EmitBlock(ExitBlock);
@@ -1060,7 +963,7 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
 
   ForScope.ForceCleanup();
 
-  LoopStack.Pop();
+  LoopStack.pop();
 
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
@@ -2214,8 +2117,8 @@ LValue CodeGenFunction::InitCapturedStruct(const CapturedStmt &S) {
       CreateMemTemp(RecordTy, "agg.captured"), RecordTy);
 
   RecordDecl::field_iterator CurField = RD->field_begin();
-  for (CapturedStmt::capture_init_iterator I = S.capture_init_begin(),
-                                           E = S.capture_init_end();
+  for (CapturedStmt::const_capture_init_iterator I = S.capture_init_begin(),
+                                                 E = S.capture_init_end();
        I != E; ++I, ++CurField) {
     LValue LV = EmitLValueForFieldInitialization(SlotLV, *CurField);
     if (CurField->hasCapturedVLAType()) {
@@ -2351,8 +2254,8 @@ void CodeGenFunction::EmitSIMDForHelperCall(llvm::Function *BodyFunc,
 llvm::Function *CodeGenFunction::EmitSimdFunction(CGPragmaSimdWrapper &W) {
   const CapturedStmt &CS = *W.getAssociatedStmt();
 
-  CGSIMDForStmtInfo CSInfo(W, LoopStack.GetCurLoopID(),
-                              LoopStack.GetCurLoopParallel());
+  CGSIMDForStmtInfo CSInfo(W, LoopStack.getCurLoopID(),
+                              LoopStack.getCurLoopParallel());
   CodeGenFunction CGF(CGM, true);
   CGF.CapturedStmtInfo = &CSInfo;
 
@@ -2366,6 +2269,13 @@ llvm::Function *CodeGenFunction::EmitSimdFunction(CGPragmaSimdWrapper &W) {
 }
 
 void CodeGenFunction::EmitPragmaSimd(CodeGenFunction::CGPragmaSimdWrapper &W) {
+  // hook for special handling of nvptx backend: empty code gen for others
+  ArrayRef<OMPClause *> clauses =
+      isa<OMPExecutableDirective>(W.getStmt())
+          ? cast<OMPExecutableDirective>(W.getStmt())->clauses()
+          : nullptr;
+  CGM.getOpenMPRuntime().EnterSimdRegion(*this, clauses);
+
   if (W.isOmp()) {
     // Start a region for loop index and loops' counters
     // (there will be another one region inside __simd_helper routine).
@@ -2394,6 +2304,9 @@ void CodeGenFunction::EmitPragmaSimd(CodeGenFunction::CGPragmaSimdWrapper &W) {
 
   W.emitInit(*this, LoopIndex, LoopCount);
 
+  llvm::AllocaInst *LoopCountStack =
+      CreateTempAlloca(LoopCount->getType(), "loop.count.stack");
+
   // Only run the SIMD loop if the loop condition is true
   llvm::BasicBlock *ContBlock = createBasicBlock("if.end");
   llvm::BasicBlock *ThenBlock = createBasicBlock("if.then");
@@ -2421,8 +2334,8 @@ void CodeGenFunction::EmitPragmaSimd(CodeGenFunction::CGPragmaSimdWrapper &W) {
     JumpDest LoopExit = getJumpDestInCurrentScope("for.end");
     RunCleanupsScope ForScope(*this);
 
-    Builder.CreateStore(llvm::ConstantInt::get(LoopCount->getType(), 0),
-                        LoopIndex);
+    // Init depends on backend: special handling for nvptx
+    CGM.getOpenMPRuntime().EmitSimdInitialization(LoopIndex, LoopCount, *this);
 
     if (SeparateLastIter)
       // Lastprivate or linear variable present, remove last iteration.
@@ -2434,7 +2347,7 @@ void CodeGenFunction::EmitPragmaSimd(CodeGenFunction::CGPragmaSimdWrapper &W) {
     // later.
     JumpDest Continue = getJumpDestInCurrentScope("for.cond");
     llvm::BasicBlock *CondBlock = Continue.getBlock();
-    LoopStack.Push(CondBlock);
+    LoopStack.push(CondBlock);
 
     EmitBlock(CondBlock);
 
@@ -2483,169 +2396,7 @@ void CodeGenFunction::EmitPragmaSimd(CodeGenFunction::CGPragmaSimdWrapper &W) {
     EmitBlock(Continue.getBlock());
 
     {
-      llvm::Value *NewLoopIndex =
-        Builder.CreateAdd(Builder.CreateLoad(LoopIndex),
-                          llvm::ConstantInt::get(LoopCount->getType(), 1));
-      Builder.CreateStore(NewLoopIndex, LoopIndex);
-    }
-
-    BreakContinueStack.pop_back();
-
-    EmitBranch(CondBlock);
-
-    ForScope.ForceCleanup();
-
-    if (DI)
-      DI->EmitLexicalBlockEnd(Builder, W.getSourceRange().getEnd());
-
-    LoopStack.Pop();
-
-    // Emit the fall-through block.
-    EmitBlock(LoopExit.getBlock(), true);
-
-    // Increment again, for last iteration.
-    W.emitIncrement(*this, LoopIndex);
-
-    if (SeparateLastIter) {
-      // This helper call makes updates to linear or lastprivate variables.
-      // In the case of openmp, only for lastprivate ones.
-      EmitSIMDForHelperCall(BodyFunction, CapStruct, LoopIndex, true);
-    }
-
-    W.emitLinearFinal(*this);
-  }
-
-  EmitBlock(ContBlock, true);
-
-  if (W.isOmp())
-    CGM.OpenMPSupport.endOpenMPRegion();
-}
-void CodeGenFunction::EmitPragmaSimdNVPTX(
-    CodeGenFunction::CGPragmaSimdWrapper &W) {
-  ArrayRef<OMPClause *> clauses =
-      isa<OMPExecutableDirective>(W.getStmt())
-          ? cast<OMPExecutableDirective>(W.getStmt())->clauses()
-          : nullptr;
-  CGM.getOpenMPRuntime().EnterSimdRegion(*this, clauses);
-
-  if (W.isOmp()) {
-    // Start a region for loop index and loops' counters
-    // (there will be another one region inside __simd_helper routine).
-    CGM.OpenMPSupport.startOpenMPRegion(false);
-    CGM.OpenMPSupport.setNoWait(false);
-    CGM.OpenMPSupport.setMergeable(true);
-    CGM.OpenMPSupport.setOrdered(false);
-  }
-  RunCleanupsScope SIMDForScope(*this);
-
-  // Emit 'safelen' clause and decide if we want to separate last iteration.
-  bool SeparateLastIter = W.emitSafelen(this);
-
-  // Update debug info.
-  CGDebugInfo *DI = getDebugInfo();
-  if (DI)
-    DI->EmitLexicalBlockStart(Builder, W.getForLoc());
-
-  // Emit the for-loop.
-  llvm::Value *LoopIndex = 0;
-  llvm::Value *LoopCount = 0;
-
-  // Emit the loop control variable and cache its initial value and the
-  // stride value.
-  // Also emit loop index and loop count, depending on stmt.
-
-  W.emitInit(*this, LoopIndex, LoopCount);
-
-  // Only run the SIMD loop if the loop condition is true
-  llvm::BasicBlock *ContBlock = createBasicBlock("if.end");
-  llvm::BasicBlock *ThenBlock = createBasicBlock("if.then");
-
-  // The following condition is zero trip test to skip last iteration if
-  // the loopcount is zero.
-  // In the 'omp simd' we may have more than one loop counter due to
-  // 'collapse', so we check loopcount instead of loop counter.
-  if (!W.isOmp()) {
-    EmitBranchOnBoolExpr(
-        W.getCond(), ThenBlock, ContBlock,
-        getProfileCount(W.getAssociatedStmt()->getCapturedStmt()));
-    EmitBlock(ThenBlock);
-  } else {
-    llvm::Value *BoolCondVal = Builder.CreateICmpSLT(
-        llvm::ConstantInt::get(LoopCount->getType(), 0), LoopCount);
-    Builder.CreateCondBr(BoolCondVal, ThenBlock, ContBlock);
-    EmitBlock(ThenBlock);
-  }
-
-  // Initialize the captured struct.
-  LValue CapStruct = InitCapturedStruct(*W.getAssociatedStmt());
-
-  {
-    JumpDest LoopExit = getJumpDestInCurrentScope("for.end");
-    RunCleanupsScope ForScope(*this);
-
-    // NVPTX intercept
-    CGM.getOpenMPRuntime().EmitSimdInitialization(LoopIndex, LoopCount, *this);
-
-    if (SeparateLastIter)
-      // Lastprivate or linear variable present, remove last iteration.
-      LoopCount = Builder.CreateSub(
-          LoopCount, llvm::ConstantInt::get(LoopCount->getType(), 1));
-
-    // Start the loop with a block that tests the condition.
-    // If there's an increment, the continue scope will be overwritten
-    // later.
-    JumpDest Continue = getJumpDestInCurrentScope("for.cond");
-    llvm::BasicBlock *CondBlock = Continue.getBlock();
-    LoopStack.Push(CondBlock);
-
-    EmitBlock(CondBlock);
-
-    llvm::Value *BoolCondVal = 0;
-    {
-      // If the for statement has a condition scope, emit the local variable
-      // declaration.
-      llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
-
-      // If there are any cleanups between here and the loop-exit scope,
-      // create a block to stage a loop exit along.
-      if (ForScope.requiresCleanups())
-        ExitBlock = createBasicBlock("for.cond.cleanup");
-
-      // As long as the condition is true, iterate the loop.
-      llvm::BasicBlock *ForBody = createBasicBlock("for.body");
-
-      // Use LoopCount and LoopIndex for iteration.
-      BoolCondVal =
-          Builder.CreateICmpULT(Builder.CreateLoad(LoopIndex), LoopCount);
-
-      // C99 6.8.5p2/p4: The first substatement is executed if the expression
-      // compares unequal to 0.  The condition must be a scalar type.
-      Builder.CreateCondBr(BoolCondVal, ForBody, ExitBlock);
-
-      if (ExitBlock != LoopExit.getBlock()) {
-        EmitBlock(ExitBlock);
-        EmitBranchThroughCleanup(LoopExit);
-      }
-
-      EmitBlock(ForBody);
-    }
-
-    Continue = getJumpDestInCurrentScope("for.inc");
-
-    // Store the blocks to use for break and continue.
-    BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
-
-    W.emitIncrement(*this, LoopIndex);
-
-    // Emit the call to the loop body.
-    llvm::Function *BodyFunction = EmitSimdFunction(W);
-    EmitSIMDForHelperCall(BodyFunction, CapStruct, LoopIndex, false);
-
-    // Emit the increment block.
-    EmitBlock(Continue.getBlock());
-
-    {
-      // NVPTX intercept: FIXME do we need the scope parentheses?
+      // NVPTX intercept: FIXME do we need the scope parentheses anymore?
       CGM.getOpenMPRuntime().EmitSimdIncrement(LoopIndex, LoopCount, *this);
     }
 
@@ -2658,12 +2409,15 @@ void CodeGenFunction::EmitPragmaSimdNVPTX(
     if (DI)
       DI->EmitLexicalBlockEnd(Builder, W.getSourceRange().getEnd());
 
-    LoopStack.Pop();
+    LoopStack.pop();
 
     // Emit the fall-through block.
     EmitBlock(LoopExit.getBlock(), true);
 
-    CGM.getOpenMPRuntime().ExitSimdRegion(*this, LoopIndex, LoopCount);
+    // close simd region special cased for nvptx, empty otherwise
+    // LoopCount is modified by last private: update the stack one here
+    Builder.CreateStore(LoopCount, LoopCountStack);
+    CGM.getOpenMPRuntime().ExitSimdRegion(*this, LoopIndex, LoopCountStack);
 
     // Increment again, for last iteration.
     W.emitIncrement(*this, LoopIndex);
@@ -2688,7 +2442,7 @@ void CodeGenFunction::EmitSIMDForHelperBody(const Stmt *S) {
   CGSIMDForStmtInfo *Info = cast<CGSIMDForStmtInfo>(CapturedStmtInfo);
 
   // Mark the loop body as an extended region of this SIMD loop.
-  LoopStack.Push(Info->getLoopID(), Info->getLoopParallel());
+  LoopStack.push(Info->getLoopID(), Info->getLoopParallel());
   {
     RunCleanupsScope Scope(*this);
 
@@ -2756,22 +2510,24 @@ void CodeGenFunction::EmitSIMDForHelperBody(const Stmt *S) {
   }
 
   // Leave the loop body.
-  LoopStack.Pop();
+  LoopStack.pop();
 }
 
 void CodeGenFunction::InitOpenMPFunction(llvm::Value *Context,
-                                         const CapturedStmt &S) {
-  CapturedStmtInfo =
-      new CGOpenMPCapturedStmtInfo(Context, S, CGM, S.getCapturedRegionKind());
+                                         const OMPExecutableDirective &S,
+                                         const CapturedStmt &CS,
+                                         bool AllocLoopBounds) {
+  CapturedStmtInfo = new CGOpenMPCapturedStmtInfo(Context, CS, CGM,
+                                                  CS.getCapturedRegionKind());
 
-  const RecordDecl *RD = S.getCapturedRecordDecl();
+  const RecordDecl *RD = CS.getCapturedRecordDecl();
 
   QualType TagType = getContext().getTagDeclType(RD);
   LValue Base = MakeNaturalAlignAddrLValue(Context, TagType);
   RecordDecl::field_iterator CurField = RD->field_begin();
-  CapturedStmt::const_capture_iterator C = S.capture_begin();
-  for (CapturedStmt::capture_init_iterator I = S.capture_init_begin(),
-                                           E = S.capture_init_end();
+  CapturedStmt::const_capture_iterator C = CS.capture_begin();
+  for (CapturedStmt::const_capture_init_iterator I = CS.capture_init_begin(),
+                                           E = CS.capture_init_end();
        I != E; ++I, ++C, ++CurField) {
 
     if (C->capturesVariableArrayType()){
@@ -2784,8 +2540,18 @@ void CodeGenFunction::InitOpenMPFunction(llvm::Value *Context,
 
     if (C->capturesVariable()) {
       const VarDecl *VD = C->getCapturedVar();
-      LValue LV = EmitLValueForField(Base, *CurField);
-      CapturedStmtInfo->addCachedVar(VD, LV.getAddress());
+      DeclRefExpr *DE = cast<DeclRefExpr>(*I);
+      llvm::Value *V = nullptr;
+      if (AllocLoopBounds && IsCombinedDirectiveLoopBoundCapture(S, DE)) {
+        VarDecl *VD = cast<VarDecl>(DE->getDecl());
+        EmitAutoVarDecl(*VD);
+        V = LocalDeclMap.lookup(VD);
+        assert(V && "Value must exist - it was just created");
+      } else {
+        LValue LV = EmitLValueForField(Base, *CurField);
+        V = LV.getAddress();
+      }
+      CapturedStmtInfo->addCachedVar(VD, V);
       continue;
     }
     if (C->capturesThis()) {
@@ -2824,7 +2590,7 @@ void CodeGenFunction::InitOpenMPTargetFunction(const OMPExecutableDirective &D,
   llvm::Function::arg_iterator Arg = this->CurFn->arg_begin();
   RecordDecl::field_iterator CurField = RD->field_begin();
   CapturedStmt::const_capture_iterator C = S.capture_begin();
-  for (CapturedStmt::capture_init_iterator I = S.capture_init_begin(),
+  for (CapturedStmt::const_capture_init_iterator I = S.capture_init_begin(),
                                            E = S.capture_init_end();
        I != E; ++I, ++C, ++CurField) {
 
@@ -2843,8 +2609,10 @@ void CodeGenFunction::InitOpenMPTargetFunction(const OMPExecutableDirective &D,
 
     if (C->capturesVariable()) {
 
-      if (ShouldIgnoreOpenMPCapture(D,OMPD_target,cast<DeclRefExpr>(*I)))
+      // If it is a capture loop bound we do not allocate it here
+      if (IsCombinedDirectiveLoopBoundCapture(D, cast<DeclRefExpr>(*I))) {
         continue;
+      }
 
       const VarDecl *VD = C->getCapturedVar();
       CapturedStmtInfo->addCachedVar(VD, Arg);
@@ -2883,6 +2651,10 @@ void CodeGenFunction::InitOpenMPSharedizeParameters(
   assert( VLAExprLocs.size() == VLAExprVals.size()
        && "Inconsistent VLA information");
 
+  unsigned NestingLevel =
+      CGM.getOpenMPRuntime().CalculateParallelNestingLevel();
+  CGM.getOpenMPRuntime().startSharedRegion(NestingLevel);
+
   const RecordDecl *RD = S.getCapturedRecordDecl();
 
 	if (!CapturedStmtInfo) {
@@ -2893,7 +2665,7 @@ void CodeGenFunction::InitOpenMPSharedizeParameters(
 	// for each captured arg
 	RecordDecl::field_iterator CurField = RD->field_begin();
 	CapturedStmt::const_capture_iterator C = S.capture_begin();
-	for (CapturedStmt::capture_init_iterator I = S.capture_init_begin(),
+	for (CapturedStmt::const_capture_init_iterator I = S.capture_init_begin(),
 	    E = S.capture_init_end();
 	    I != E; ++I, ++C, ++CurField) {
 
@@ -2904,19 +2676,23 @@ void CodeGenFunction::InitOpenMPSharedizeParameters(
       Expr *Size = VAT->getSizeExpr();
 
       llvm::Value *&Vref = VLASizeMap[Size];
-      assert(Vref && "No VLA infor for this expression??");
+      assert(Vref && "No VLA info for this expression??");
 
       // We need to have the VLA size stored so that can be moved to shared
       // memory during the postprocessing of the generated code.
       llvm::AllocaInst *Tmp = CreateTempAlloca(Vref->getType(),
                                                "VLA_size_tmp");
-      CGM.getOpenMPRuntime().setRequiresSharedVersion(Tmp);
+      CGM.getOpenMPRuntime().addToSharedRegion(Tmp, NestingLevel);
       Builder.CreateStore(Vref,Tmp);
 
       // We need to save the original information so that it gets restored after
       // the region
       llvm::Value *OldV = Vref;
       Vref = Builder.CreateLoad(Tmp);
+
+      // Save the load as a shared variable as all the uses will have to load
+      CGM.getOpenMPRuntime().addToSharedRegion(Vref, NestingLevel);
+
       VLAExprLocs.push_back(&Vref);
       VLAExprVals.push_back(OldV);
       continue;
@@ -2950,15 +2726,12 @@ void CodeGenFunction::InitOpenMPSharedizeParameters(
 	    else
 	      continue;
 
-	    // NVPTX: We only need to force it to be shared if it is a local var
-	    // (alloc in in the stack) and we are not in a nested #parallel
-	    // if we are in a nested #parallel, the global candidate cannot be
-	    // passed through shared memory, as we are not extending parallelism,
-	    // the same thread executes in a serialized way the innermost #parallel
-	    // and we can directly use the original private alloca variable
-	    if (isa<llvm::AllocaInst>(GblCandidate) && !CGM.getOpenMPRuntime().IsNestedParallel()) {
-	      CGM.getOpenMPRuntime().setRequiresSharedVersion(GblCandidate);
-	    }
+            // We only need to force it to be shared if it is a local var
+            // (alloc in in the stack).
+            if (isa<llvm::AllocaInst>(GblCandidate)) {
+              CGM.getOpenMPRuntime().addToSharedRegion(GblCandidate,
+                                                       NestingLevel);
+            }
 	    else if (!IsPrivateCandidate) {
 	      continue;
 	    }

@@ -16,8 +16,8 @@ int main (int argc, char **argv) {
 // CHECK:      #pragma omp target
   a=2;
 // CHECK-NEXT: a = 2;
-#pragma omp target if(b) device(c+e) map(b,c) map(to:d) map(from:e) map(alloc:f) map(tofrom: g)
-// CHECK:      #pragma omp target if(b) device(c + e) map(tofrom: b,c) map(to: d) map(from: e) map(alloc: f) map(tofrom: g)
+#pragma omp target if(b) device(c+e) map(b,c) map(to:d) map(from:e) map(alloc:f) map(tofrom: g) depend(in: argc) depend(out: c) depend(inout: d)
+// CHECK:      #pragma omp target if(b) device(c + e) map(tofrom: b,c) map(to: d) map(from: e) map(alloc: f) map(tofrom: g) depend(in: argc) depend(out: c) depend(inout: d)
   foo();
 // CHECK-NEXT: foo();
   return (0);

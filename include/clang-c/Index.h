@@ -1573,7 +1573,7 @@ enum CXCursorKind {
   CXCursor_ObjCImplementationDecl        = 18,
   /** \brief An Objective-C \@implementation for a category. */
   CXCursor_ObjCCategoryImplDecl          = 19,
-  /** \brief A typedef */
+  /** \brief A typedef. */
   CXCursor_TypedefDecl                   = 20,
   /** \brief A C++ class method. */
   CXCursor_CXXMethod                     = 21,
@@ -2183,7 +2183,13 @@ enum CXCursorKind {
    */
   CXCursor_SEHLeaveStmt                  = 271,
 
-  CXCursor_LastStmt                      = CXCursor_OMPAtomicDirective,
+ 
+  /** \brief OpenMP directives (cont.).
+  */
+  CXCursor_OMPTargetEnterDataDirective   = 272,
+  CXCursor_OMPTargetExitDataDirective    = 273,
+
+  CXCursor_LastStmt                      = CXCursor_OMPTargetExitDataDirective,
 
   /**
    * \brief Cursor that represents the translation unit itself.

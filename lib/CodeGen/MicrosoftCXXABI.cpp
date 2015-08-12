@@ -106,6 +106,10 @@ public:
                                      QualType DestTy) override;
 
   bool EmitBadCastCall(CodeGenFunction &CGF) override;
+  bool canEmitAvailableExternallyVTable(
+      const CXXRecordDecl *RD) const override {
+    return false;
+  }
 
   llvm::Value *
   GetVirtualBaseClassOffset(CodeGenFunction &CGF, llvm::Value *This,
@@ -851,8 +855,14 @@ namespace {
 struct CallEndCatchMSVC : EHScopeStack::Cleanup {
   CallEndCatchMSVC() {}
   void Emit(CodeGenFunction &CGF, Flags flags) override {
-    CGF.EmitNounwindRuntimeCall(
-        CGF.CGM.getIntrinsic(llvm::Intrinsic::eh_endcatch));
+    if (CGF.CGM.getCodeGenOpts().NewMSEH) {
+      llvm::BasicBlock *BB = CGF.createBasicBlock("catchret.dest");
+      CGF.Builder.CreateCatchRet(BB);
+      CGF.EmitBlock(BB);
+    } else {
+      CGF.EmitNounwindRuntimeCall(
+          CGF.CGM.getIntrinsic(llvm::Intrinsic::eh_endcatch));
+    }
   }
 };
 }
@@ -862,24 +872,36 @@ void MicrosoftCXXABI::emitBeginCatch(CodeGenFunction &CGF,
   // In the MS ABI, the runtime handles the copy, and the catch handler is
   // responsible for destruction.
   VarDecl *CatchParam = S->getExceptionDecl();
-  llvm::Value *Exn = CGF.getExceptionFromSlot();
-  llvm::Function *BeginCatch =
-      CGF.CGM.getIntrinsic(llvm::Intrinsic::eh_begincatch);
-
+  llvm::Value *Exn = nullptr;
+  llvm::Function *BeginCatch = nullptr;
+  bool NewEH = CGF.CGM.getCodeGenOpts().NewMSEH;
+  if (!NewEH) {
+    Exn = CGF.getExceptionFromSlot();
+    BeginCatch = CGF.CGM.getIntrinsic(llvm::Intrinsic::eh_begincatch);
+  }
   // If this is a catch-all or the catch parameter is unnamed, we don't need to
   // emit an alloca to the object.
   if (!CatchParam || !CatchParam->getDeclName()) {
-    llvm::Value *Args[2] = {Exn, llvm::Constant::getNullValue(CGF.Int8PtrTy)};
-    CGF.EmitNounwindRuntimeCall(BeginCatch, Args);
+    if (!NewEH) {
+      llvm::Value *Args[2] = {Exn, llvm::Constant::getNullValue(CGF.Int8PtrTy)};
+      CGF.EmitNounwindRuntimeCall(BeginCatch, Args);
+    }
     CGF.EHStack.pushCleanup<CallEndCatchMSVC>(NormalCleanup);
     return;
   }
 
   CodeGenFunction::AutoVarEmission var = CGF.EmitAutoVarAlloca(*CatchParam);
-  llvm::Value *ParamAddr =
-      CGF.Builder.CreateBitCast(var.getObjectAddress(CGF), CGF.Int8PtrTy);
-  llvm::Value *Args[2] = {Exn, ParamAddr};
-  CGF.EmitNounwindRuntimeCall(BeginCatch, Args);
+  if (!NewEH) {
+    llvm::Value *ParamAddr =
+        CGF.Builder.CreateBitCast(var.getObjectAddress(CGF), CGF.Int8PtrTy);
+    llvm::Value *Args[2] = {Exn, ParamAddr};
+    CGF.EmitNounwindRuntimeCall(BeginCatch, Args);
+  } else {
+    llvm::BasicBlock *CatchPadBB =
+        CGF.Builder.GetInsertBlock()->getSinglePredecessor();
+    auto *CPI = cast<llvm::CatchPadInst>(CatchPadBB->getFirstNonPHI());
+    CPI->setArgOperand(1, var.getObjectAddress(CGF));
+  }
   CGF.EHStack.pushCleanup<CallEndCatchMSVC>(NormalCleanup);
   CGF.EmitAutoVarCleanups(var);
 }
@@ -3803,9 +3825,7 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
   CodeGenFunction::RunCleanupsScope Cleanups(CGF);
 
   const auto *FPT = CD->getType()->castAs<FunctionProtoType>();
-  ConstExprIterator ArgBegin(ArgVec.data()),
-      ArgEnd(ArgVec.data() + ArgVec.size());
-  CGF.EmitCallArgs(Args, FPT, ArgBegin, ArgEnd, CD, IsCopy ? 1 : 0);
+  CGF.EmitCallArgs(Args, FPT, llvm::makeArrayRef(ArgVec), CD, IsCopy ? 1 : 0);
 
   // Insert any ABI-specific implicit constructor arguments.
   unsigned ExtraArgs = addImplicitConstructorArgs(CGF, CD, Ctor_Complete,

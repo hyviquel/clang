@@ -285,7 +285,6 @@ private:
   const CodeGenOptions &CodeGenOpts;
   llvm::Module &TheModule;
   DiagnosticsEngine &Diags;
-  const llvm::DataLayout &TheDataLayout;
   const TargetInfo &Target;
   std::unique_ptr<CGCXXABI> ABI;
   llvm::LLVMContext &VMContext;
@@ -513,11 +512,9 @@ private:
 
   std::unique_ptr<CoverageMappingModuleGen> CoverageMapping;
 public:
-  CodeGenModule(ASTContext &C,
-                const HeaderSearchOptions &headersearchopts,
+  CodeGenModule(ASTContext &C, const HeaderSearchOptions &headersearchopts,
                 const PreprocessorOptions &ppopts,
-                const CodeGenOptions &CodeGenOpts,
-                llvm::Module &M, const llvm::DataLayout &TD,
+                const CodeGenOptions &CodeGenOpts, llvm::Module &M,
                 DiagnosticsEngine &Diags,
                 CoverageSourceInfo *CoverageInfo = nullptr);
 
@@ -707,7 +704,9 @@ public:
   const CodeGenOptions &getCodeGenOpts() const { return CodeGenOpts; }
   llvm::Module &getModule() const { return TheModule; }
   DiagnosticsEngine &getDiags() const { return Diags; }
-  const llvm::DataLayout &getDataLayout() const { return TheDataLayout; }
+  const llvm::DataLayout &getDataLayout() const {
+    return TheModule.getDataLayout();
+  }
   const TargetInfo &getTarget() const { return Target; }
   const llvm::Triple &getTriple() const;
   bool supportsCOMDAT() const;
@@ -1270,7 +1269,6 @@ public:
       llvm::SmallVector<unsigned, 8> OffloadingMapTypes;
       bool MapsBegin;
       bool MapsEnd;
-      llvm::CallInst* OffloadingMapBeginFunctionCall;
       llvm::Value* OffloadingDevice;
       llvm::CallInst* OffloadingHostFunctionCall;
       OMPStackElemTy(CodeGenModule &CGM);
@@ -1416,8 +1414,6 @@ public:
     llvm::Value **getWaitDepsArgs();
     void addOffloadingMap(const Expr *DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type);
     void getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types);
-    llvm::CallInst*  getOffloadingMapBeginFunctionCall();
-    void setOffloadingMapBeginFunctionCall(llvm::CallInst *OffloadingMapBeginFunctionCall);
     void setOffloadingMapArguments(llvm::ArrayRef<llvm::Value *> Args) {
       for (auto Arg : Args) {
         OpenMPStack.back().offloadingMapArguments.push_back(Arg);

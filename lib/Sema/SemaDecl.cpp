@@ -1733,20 +1733,18 @@ NamedDecl *Sema::LazilyCreateBuiltin(IdentifierInfo *II, unsigned ID,
   if (Error) {
     if (ForRedeclaration)
       Diag(Loc, diag::warn_implicit_decl_requires_sysheader)
-          << getHeaderName(Error)
-          << Context.BuiltinInfo.GetName(ID);
+          << getHeaderName(Error) << Context.BuiltinInfo.getName(ID);
     return nullptr;
   }
 
   if (!ForRedeclaration && Context.BuiltinInfo.isPredefinedLibFunction(ID)) {
     Diag(Loc, diag::ext_implicit_lib_function_decl)
-      << Context.BuiltinInfo.GetName(ID)
-      << R;
+        << Context.BuiltinInfo.getName(ID) << R;
     if (Context.BuiltinInfo.getHeaderName(ID) &&
         !Diags.isIgnored(diag::ext_implicit_lib_function_decl, Loc))
       Diag(Loc, diag::note_include_header_or_declare)
           << Context.BuiltinInfo.getHeaderName(ID)
-          << Context.BuiltinInfo.GetName(ID);
+          << Context.BuiltinInfo.getName(ID);
   }
 
   DeclContext *Parent = Context.getTranslationUnitDecl();
@@ -1794,37 +1792,6 @@ NamedDecl *Sema::LazilyCreateBuiltin(IdentifierInfo *II, unsigned ID,
   PushOnScopeChains(New, TUScope);
   CurContext = SavedContext;
   return New;
-}
-
-/// \brief Filter out any previous declarations that the given declaration
-/// should not consider because they are not permitted to conflict, e.g.,
-/// because they come from hidden sub-modules and do not refer to the same
-/// entity.
-static void filterNonConflictingPreviousDecls(Sema &S,
-                                              NamedDecl *decl,
-                                              LookupResult &previous){
-  // This is only interesting when modules are enabled.
-  if ((!S.getLangOpts().Modules && !S.getLangOpts().ModulesLocalVisibility) ||
-      !S.getLangOpts().ModulesHideInternalLinkage)
-    return;
-
-  // Empty sets are uninteresting.
-  if (previous.empty())
-    return;
-
-  LookupResult::Filter filter = previous.makeFilter();
-  while (filter.hasNext()) {
-    NamedDecl *old = filter.next();
-
-    // Non-hidden declarations are never ignored.
-    if (S.isVisible(old))
-      continue;
-
-    if (!old->isExternallyVisible())
-      filter.erase();
-  }
-
-  filter.done();
 }
 
 /// Typedef declarations don't have linkage, but they still denote the same
@@ -3115,7 +3082,7 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
       // remain visible, a single bogus local redeclaration (which is
       // actually only a warning) could break all the downstream code.
       if (!New->getLexicalDeclContext()->isFunctionOrMethod())
-        New->getIdentifier()->setBuiltinID(Builtin::NotBuiltin);
+        New->getIdentifier()->revertBuiltin();
 
       return false;
     }
@@ -3270,9 +3237,16 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
     //
     // Neither C nor C++ requires a diagnostic for this, but we should still try
     // to diagnose it.
-    Diag(New->getLocation(), diag::err_redefinition_different_type)
-      << New->getDeclName() << New->getType() << Old->getType();
-    Diag(Old->getLocation(), diag::note_previous_definition);
+    Diag(New->getLocation(), New->isThisDeclarationADefinition()
+                                 ? diag::err_redefinition_different_type
+                                 : diag::err_redeclaration_different_type)
+        << New->getDeclName() << New->getType() << Old->getType();
+
+    diag::kind PrevDiag;
+    SourceLocation OldLocation;
+    std::tie(PrevDiag, OldLocation) =
+        getNoteDiagForInvalidRedeclaration(Old, New);
+    Diag(OldLocation, PrevDiag);
     return New->setInvalidDecl();
   }
 
@@ -4794,6 +4768,13 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
   LookupResult Previous(*this, NameInfo, LookupOrdinaryName,
                         ForRedeclaration);
 
+  // If we're hiding internal-linkage symbols in modules from redeclaration
+  // lookup, let name lookup know.
+  if ((getLangOpts().Modules || getLangOpts().ModulesLocalVisibility) &&
+      getLangOpts().ModulesHideInternalLinkage &&
+      D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_typedef)
+    Previous.setAllowHiddenInternal(false);
+
   // See if this is a redefinition of a variable in the same scope.
   if (!D.getCXXScopeSpec().isSet()) {
     bool IsLinkageLookup = false;
@@ -4879,6 +4860,23 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
   // of a function declaration (C++ only).
   if (getLangOpts().CPlusPlus)
     CheckExtraCXXDefaultArguments(D);
+
+  if (D.getDeclSpec().isConceptSpecified()) {
+    // C++ Concepts TS [dcl.spec.concept]p1: The concept specifier shall be
+    // applied only to the definition of a function template or variable
+    // template, declared in namespace scope
+    if (!TemplateParamLists.size()) {
+      Diag(D.getDeclSpec().getConceptSpecLoc(),
+           diag::err_concept_decl_non_template);
+      return nullptr;
+    }
+
+    if (!DC->getRedeclContext()->isFileContext()) {
+      Diag(D.getIdentifierLoc(),
+           diag::err_concept_decls_may_only_appear_in_namespace_scope);
+      return nullptr;
+    }
+  }
 
   NamedDecl *New;
 
@@ -5382,10 +5380,9 @@ static void checkDLLAttributeRedeclaration(Sema &S, NamedDecl *OldDecl,
   bool AddsAttr = !(OldImportAttr || OldExportAttr) && HasNewAttr;
 
   if (AddsAttr && !IsSpecialization && !OldDecl->isImplicit()) {
-    // If the declaration hasn't been used yet, allow with a warning for
-    // free functions and global variables.
+    // Allow with a warning for free functions and global variables.
     bool JustWarn = false;
-    if (!OldDecl->isUsed() && !OldDecl->isCXXClassMember()) {
+    if (!OldDecl->isCXXClassMember()) {
       auto *VD = dyn_cast<VarDecl>(OldDecl);
       if (VD && !VD->getDescribedVarTemplate())
         JustWarn = true;
@@ -5393,6 +5390,13 @@ static void checkDLLAttributeRedeclaration(Sema &S, NamedDecl *OldDecl,
       if (FD && FD->getTemplatedKind() == FunctionDecl::TK_NonTemplate)
         JustWarn = true;
     }
+
+    // We cannot change a declaration that's been used because IR has already
+    // been emitted. Dllimported functions will still work though (modulo
+    // address equality) as they can use the thunk.
+    if (OldDecl->isUsed())
+      if (!isa<FunctionDecl>(OldDecl) || !NewImportAttr)
+        JustWarn = false;
 
     unsigned DiagID = JustWarn ? diag::warn_attribute_dll_redeclaration
                                : diag::err_attribute_dll_redeclaration;
@@ -5569,15 +5573,12 @@ bool Sema::adjustContextForLocalExternDecl(DeclContext *&DC) {
   return true;
 }
 
-/// \brief Returns true if given declaration is TU-scoped and externally
-/// visible.
-static bool isDeclTUScopedExternallyVisible(const Decl *D) {
-  if (auto *FD = dyn_cast<FunctionDecl>(D))
-    return (FD->getDeclContext()->isTranslationUnit() || FD->isExternC()) &&
-           FD->hasExternalFormalLinkage();
-  else if (auto *VD = dyn_cast<VarDecl>(D))
-    return (VD->getDeclContext()->isTranslationUnit() || VD->isExternC()) &&
-           VD->hasExternalFormalLinkage();
+/// \brief Returns true if given declaration has external C language linkage.
+static bool isDeclExternC(const Decl *D) {
+  if (const auto *FD = dyn_cast<FunctionDecl>(D))
+    return FD->isExternC();
+  if (const auto *VD = dyn_cast<VarDecl>(D))
+    return VD->isExternC();
 
   llvm_unreachable("Unknown type of decl!");
 }
@@ -5855,11 +5856,13 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     unsigned VDTemplateParamLists = TemplateParams ? 1 : 0;
     if (TemplateParamLists.size() > VDTemplateParamLists)
       NewVD->setTemplateParameterListsInfo(
-          Context, TemplateParamLists.size() - VDTemplateParamLists,
-          TemplateParamLists.data());
+          Context, TemplateParamLists.drop_back(VDTemplateParamLists));
 
     if (D.getDeclSpec().isConstexprSpecified())
       NewVD->setConstexpr(true);
+
+    if (D.getDeclSpec().isConceptSpecified())
+      NewVD->setConcept(true);
   }
 
   // Set the lexical context. If the declarator has a C++ scope specifier, the
@@ -6006,13 +6009,16 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
     NewVD->addAttr(::new (Context) AsmLabelAttr(SE->getStrTokenLoc(0),
                                                 Context, Label, 0));
-  } else if (!ExtnameUndeclaredIdentifiers.empty() &&
-             isDeclTUScopedExternallyVisible(NewVD)) {
+  } else if (!ExtnameUndeclaredIdentifiers.empty()) {
     llvm::DenseMap<IdentifierInfo*,AsmLabelAttr*>::iterator I =
       ExtnameUndeclaredIdentifiers.find(NewVD->getIdentifier());
     if (I != ExtnameUndeclaredIdentifiers.end()) {
-      NewVD->addAttr(I->second);
-      ExtnameUndeclaredIdentifiers.erase(I);
+      if (isDeclExternC(NewVD)) {
+        NewVD->addAttr(I->second);
+        ExtnameUndeclaredIdentifiers.erase(I);
+      } else
+        Diag(NewVD->getLocation(), diag::warn_redefine_extname_not_applied)
+            << /*Variable*/1 << NewVD;
     }
   }
 
@@ -6503,9 +6509,6 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD, LookupResult &Previous) {
       checkForConflictWithNonVisibleExternC(*this, NewVD, Previous))
     Previous.setShadowed();
 
-  // Filter out any non-conflicting previous declarations.
-  filterNonConflictingPreviousDecls(*this, NewVD, Previous);
-
   if (!Previous.empty()) {
     MergeVarDecl(NewVD, Previous);
     return true;
@@ -6513,50 +6516,45 @@ bool Sema::CheckVariableDeclaration(VarDecl *NewVD, LookupResult &Previous) {
   return false;
 }
 
-/// \brief Data used with FindOverriddenMethod
-struct FindOverriddenMethodData {
+namespace {
+struct FindOverriddenMethod {
   Sema *S;
   CXXMethodDecl *Method;
+
+  /// Member lookup function that determines whether a given C++
+  /// method overrides a method in a base class, to be used with
+  /// CXXRecordDecl::lookupInBases().
+  bool operator()(const CXXBaseSpecifier *Specifier, CXXBasePath &Path) {
+    RecordDecl *BaseRecord =
+        Specifier->getType()->getAs<RecordType>()->getDecl();
+
+    DeclarationName Name = Method->getDeclName();
+
+    // FIXME: Do we care about other names here too?
+    if (Name.getNameKind() == DeclarationName::CXXDestructorName) {
+      // We really want to find the base class destructor here.
+      QualType T = S->Context.getTypeDeclType(BaseRecord);
+      CanQualType CT = S->Context.getCanonicalType(T);
+
+      Name = S->Context.DeclarationNames.getCXXDestructorName(CT);
+    }
+
+    for (Path.Decls = BaseRecord->lookup(Name); !Path.Decls.empty();
+         Path.Decls = Path.Decls.slice(1)) {
+      NamedDecl *D = Path.Decls.front();
+      if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D)) {
+        if (MD->isVirtual() && !S->IsOverload(Method, MD, false))
+          return true;
+      }
+    }
+
+    return false;
+  }
 };
 
-/// \brief Member lookup function that determines whether a given C++
-/// method overrides a method in a base class, to be used with
-/// CXXRecordDecl::lookupInBases().
-static bool FindOverriddenMethod(const CXXBaseSpecifier *Specifier,
-                                 CXXBasePath &Path,
-                                 void *UserData) {
-  RecordDecl *BaseRecord = Specifier->getType()->getAs<RecordType>()->getDecl();
+enum OverrideErrorKind { OEK_All, OEK_NonDeleted, OEK_Deleted };
+} // end anonymous namespace
 
-  FindOverriddenMethodData *Data 
-    = reinterpret_cast<FindOverriddenMethodData*>(UserData);
-  
-  DeclarationName Name = Data->Method->getDeclName();
-  
-  // FIXME: Do we care about other names here too?
-  if (Name.getNameKind() == DeclarationName::CXXDestructorName) {
-    // We really want to find the base class destructor here.
-    QualType T = Data->S->Context.getTypeDeclType(BaseRecord);
-    CanQualType CT = Data->S->Context.getCanonicalType(T);
-    
-    Name = Data->S->Context.DeclarationNames.getCXXDestructorName(CT);
-  }    
-  
-  for (Path.Decls = BaseRecord->lookup(Name);
-       !Path.Decls.empty();
-       Path.Decls = Path.Decls.slice(1)) {
-    NamedDecl *D = Path.Decls.front();
-    if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(D)) {
-      if (MD->isVirtual() && !Data->S->IsOverload(Data->Method, MD, false))
-        return true;
-    }
-  }
-  
-  return false;
-}
-
-namespace {
-  enum OverrideErrorKind { OEK_All, OEK_NonDeleted, OEK_Deleted };
-}
 /// \brief Report an error regarding overriding, along with any relevant
 /// overriden methods.
 ///
@@ -6584,13 +6582,13 @@ static void ReportOverrides(Sema& S, unsigned DiagID, const CXXMethodDecl *MD,
 bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
   // Look for methods in base classes that this method might override.
   CXXBasePaths Paths;
-  FindOverriddenMethodData Data;
-  Data.Method = MD;
-  Data.S = this;
+  FindOverriddenMethod FOM;
+  FOM.Method = MD;
+  FOM.S = this;
   bool hasDeletedOverridenMethods = false;
   bool hasNonDeletedOverridenMethods = false;
   bool AddedAny = false;
-  if (DC->lookupInBases(&FindOverriddenMethod, &Data, Paths)) {
+  if (DC->lookupInBases(FOM, Paths)) {
     for (auto *I : Paths.found_decls()) {
       if (CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(I)) {
         MD->addOverriddenMethod(OldMD->getCanonicalDecl());
@@ -7233,6 +7231,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     bool isVirtual = D.getDeclSpec().isVirtualSpecified();
     bool isExplicit = D.getDeclSpec().isExplicitSpecified();
     bool isConstexpr = D.getDeclSpec().isConstexprSpecified();
+    bool isConcept = D.getDeclSpec().isConceptSpecified();
     isFriend = D.getDeclSpec().isFriendSpecified();
     if (isFriend && !isInline && D.isFunctionDefinition()) {
       // C++ [class.friend]p5
@@ -7306,17 +7305,14 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         // For source fidelity, store the other template param lists.
         if (TemplateParamLists.size() > 1) {
           NewFD->setTemplateParameterListsInfo(Context,
-                                               TemplateParamLists.size() - 1,
-                                               TemplateParamLists.data());
+                                               TemplateParamLists.drop_back(1));
         }
       } else {
         // This is a function template specialization.
         isFunctionTemplateSpecialization = true;
         // For source fidelity, store all the template param lists.
         if (TemplateParamLists.size() > 0)
-          NewFD->setTemplateParameterListsInfo(Context,
-                                               TemplateParamLists.size(),
-                                               TemplateParamLists.data());
+          NewFD->setTemplateParameterListsInfo(Context, TemplateParamLists);
 
         // C++0x [temp.expl.spec]p20 forbids "template<> friend void foo(int);".
         if (isFriend) {
@@ -7346,9 +7342,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       // this is NOT (an explicit specialization of) a template.
       if (TemplateParamLists.size() > 0)
         // For source fidelity, store all the template param lists.
-        NewFD->setTemplateParameterListsInfo(Context,
-                                             TemplateParamLists.size(),
-                                             TemplateParamLists.data());
+        NewFD->setTemplateParameterListsInfo(Context, TemplateParamLists);
     }
 
     if (Invalid) {
@@ -7449,6 +7443,20 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         Diag(D.getDeclSpec().getConstexprSpecLoc(), diag::err_constexpr_dtor);
     }
 
+    if (isConcept) {
+      // C++ Concepts TS [dcl.spec.concept]p1: The concept specifier shall be
+      // applied only to the definition of a function template [...]
+      if (!D.isFunctionDefinition()) {
+        Diag(D.getDeclSpec().getConceptSpecLoc(),
+             diag::err_function_concept_not_defined);
+        NewFD->setInvalidDecl();
+      }
+
+      // C++ Concepts TS [dcl.spec.concept]p2: Every concept definition is
+      // implicity defined to be a constexpr declaration (implicitly inline)
+      NewFD->setImplicitlyInline();
+    }
+
     // If __module_private__ was specified, mark the function accordingly.
     if (D.getDeclSpec().isModulePrivateSpecified()) {
       if (isFunctionTemplateSpecialization) {
@@ -7536,13 +7544,16 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     StringLiteral *SE = cast<StringLiteral>(E);
     NewFD->addAttr(::new (Context) AsmLabelAttr(SE->getStrTokenLoc(0), Context,
                                                 SE->getString(), 0));
-  } else if (!ExtnameUndeclaredIdentifiers.empty() &&
-             isDeclTUScopedExternallyVisible(NewFD)) {
+  } else if (!ExtnameUndeclaredIdentifiers.empty()) {
     llvm::DenseMap<IdentifierInfo*,AsmLabelAttr*>::iterator I =
       ExtnameUndeclaredIdentifiers.find(NewFD->getIdentifier());
     if (I != ExtnameUndeclaredIdentifiers.end()) {
-      NewFD->addAttr(I->second);
-      ExtnameUndeclaredIdentifiers.erase(I);
+      if (isDeclExternC(NewFD)) {
+        NewFD->addAttr(I->second);
+        ExtnameUndeclaredIdentifiers.erase(I);
+      } else
+        Diag(NewFD->getLocation(), diag::warn_redefine_extname_not_applied)
+            << /*Variable*/0 << NewFD;
     }
   }
 
@@ -8059,9 +8070,6 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   bool MergeTypeWithPrevious = !getLangOpts().CPlusPlus &&
                                !Previous.isShadowed();
 
-  // Filter out any non-conflicting previous declarations.
-  filterNonConflictingPreviousDecls(*this, NewFD, Previous);
-
   bool Redeclaration = false;
   NamedDecl *OldDecl = nullptr;
 
@@ -8115,7 +8123,6 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   // Check for a previous extern "C" declaration with this name.
   if (!Redeclaration &&
       checkForConflictWithNonVisibleExternC(*this, NewFD, Previous)) {
-    filterNonConflictingPreviousDecls(*this, NewFD, Previous);
     if (!Previous.empty()) {
       // This is an extern "C" declaration with the same name as a previous
       // declaration, and thus redeclares that entity...
@@ -8292,7 +8299,7 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
       if (!T.isNull() && !Context.hasSameType(T, NewFD->getType())) {
         // The type of this function differs from the type of the builtin,
         // so forget about the builtin entirely.
-        Context.BuiltinInfo.ForgetBuiltin(BuiltinID, Context.Idents);
+        Context.BuiltinInfo.forgetBuiltin(BuiltinID, Context.Idents);
       }
     }
 
@@ -8575,9 +8582,8 @@ namespace {
 
       // Convert FieldDecls to their index number.
       llvm::SmallVector<unsigned, 4> UsedFieldIndex;
-      for (auto I = Fields.rbegin(), E = Fields.rend(); I != E; ++I) {
-        UsedFieldIndex.push_back((*I)->getFieldIndex());
-      }
+      for (const FieldDecl *I : llvm::reverse(Fields))
+        UsedFieldIndex.push_back(I->getFieldIndex());
 
       // See if a warning is needed by checking the first difference in index
       // numbers.  If field being used has index less than the field being
@@ -9407,6 +9413,15 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl,
       return;
     }
 
+    // C++ Concepts TS [dcl.spec.concept]p1: [...]  A variable template
+    // definition having the concept specifier is called a variable concept. A
+    // concept definition refers to [...] a variable concept and its initializer.
+    if (Var->isConcept()) {
+      Diag(Var->getLocation(), diag::err_var_concept_not_initialized);
+      Var->setInvalidDecl();
+      return;
+    }
+
     // OpenCL v1.1 s6.5.3: variables declared in the constant address space must
     // be initialized.
     if (!Var->isInvalidDecl() &&
@@ -9832,6 +9847,16 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
     FinalizeVarWithDestructor(var, recordType);
 }
 
+/// \brief Determines if a variable's alignment is dependent.
+static bool hasDependentAlignment(VarDecl *VD) {
+  if (VD->getType()->isDependentType())
+    return true;
+  for (auto *I : VD->specific_attrs<AlignedAttr>())
+    if (I->isAlignmentDependent())
+      return true;
+  return false;
+}
+
 /// FinalizeDeclaration - called by ParseDeclarationAfterDeclarator to perform
 /// any semantic actions necessary after any initializer has been attached.
 void
@@ -9844,6 +9869,22 @@ Sema::FinalizeDeclaration(Decl *ThisDecl) {
     return;
 
   checkAttributesAfterMerging(*this, *VD);
+
+  // Perform TLS alignment check here after attributes attached to the variable
+  // which may affect the alignment have been processed. Only perform the check
+  // if the target has a maximum TLS alignment (zero means no constraints).
+  if (unsigned MaxAlign = Context.getTargetInfo().getMaxTLSAlign()) {
+    // Protect the check so that it's not performed on dependent types and
+    // dependent alignments (we can't determine the alignment in that case).
+    if (VD->getTLSKind() && !hasDependentAlignment(VD)) {
+      CharUnits MaxAlignChars = Context.toCharUnitsFromBits(MaxAlign);
+      if (Context.getDeclAlign(VD) > MaxAlignChars) {
+        Diag(VD->getLocation(), diag::err_tls_var_aligned_over_maximum)
+          << (unsigned)Context.getDeclAlign(VD).getQuantity() << VD
+          << (unsigned)MaxAlignChars.getQuantity();
+      }
+    }
+  }
 
   // Static locals inherit dll attributes from their function.
   if (VD->isStaticLocal()) {
@@ -12175,9 +12216,7 @@ CreateNewDecl:
 
       New->setQualifierInfo(SS.getWithLocInContext(Context));
       if (TemplateParameterLists.size() > 0) {
-        New->setTemplateParameterListsInfo(Context,
-                                           TemplateParameterLists.size(),
-                                           TemplateParameterLists.data());
+        New->setTemplateParameterListsInfo(Context, TemplateParameterLists);
       }
     }
     else
@@ -14367,12 +14406,14 @@ void Sema::ActOnPragmaRedefineExtname(IdentifierInfo* Name,
   // 1) declares a function or a variable
   // 2) has external linkage
   // already exists, add a label attribute to it.
-  if (PrevDecl &&
-      (isa<FunctionDecl>(PrevDecl) || isa<VarDecl>(PrevDecl)) &&
-      PrevDecl->hasExternalFormalLinkage())
-    PrevDecl->addAttr(Attr);
+  if (PrevDecl && (isa<FunctionDecl>(PrevDecl) || isa<VarDecl>(PrevDecl))) {
+    if (isDeclExternC(PrevDecl))
+      PrevDecl->addAttr(Attr);
+    else
+      Diag(PrevDecl->getLocation(), diag::warn_redefine_extname_not_applied)
+          << /*Variable*/(isa<FunctionDecl>(PrevDecl) ? 0 : 1) << PrevDecl;
   // Otherwise, add a label atttibute to ExtnameUndeclaredIdentifiers.
-  else
+  } else
     (void)ExtnameUndeclaredIdentifiers.insert(std::make_pair(Name, Attr));
 }
 

@@ -1655,7 +1655,11 @@ public:
   void getDependentLibraryOption(llvm::StringRef Lib,
                                  llvm::SmallString<24> &Opt) const override {
     Opt = "\01";
-    Opt += Lib;
+    // If the argument contains a space, enclose it in quotes.
+    if (Lib.find(" ") != StringRef::npos)
+      Opt += "\"" + Lib.str() + "\"";
+    else
+      Opt += Lib;
   }
 };
 
@@ -1858,13 +1862,20 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       Hi = Integer;
     } else if (k >= BuiltinType::Bool && k <= BuiltinType::LongLong) {
       Current = Integer;
-    } else if ((k == BuiltinType::Float || k == BuiltinType::Double) ||
-               (k == BuiltinType::LongDouble &&
-                getTarget().getTriple().isOSNaCl())) {
+    } else if (k == BuiltinType::Float || k == BuiltinType::Double) {
       Current = SSE;
     } else if (k == BuiltinType::LongDouble) {
-      Lo = X87;
-      Hi = X87Up;
+      const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
+      if (LDF == &llvm::APFloat::IEEEquad) {
+        Lo = SSE;
+        Hi = SSEUp;
+      } else if (LDF == &llvm::APFloat::x87DoubleExtended) {
+        Lo = X87;
+        Hi = X87Up;
+      } else if (LDF == &llvm::APFloat::IEEEdouble) {
+        Current = SSE;
+      } else
+        llvm_unreachable("unexpected long double representation!");
     }
     // FIXME: _Decimal32 and _Decimal64 are SSE.
     // FIXME: _float128 and _Decimal128 are (SSE, SSEUp).
@@ -1907,16 +1918,18 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
 
   if (const VectorType *VT = Ty->getAs<VectorType>()) {
     uint64_t Size = getContext().getTypeSize(VT);
-    if (Size == 32) {
-      // gcc passes all <4 x char>, <2 x short>, <1 x int>, <1 x
-      // float> as integer.
+    if (Size == 1 || Size == 8 || Size == 16 || Size == 32) {
+      // gcc passes the following as integer:
+      // 4 bytes - <4 x char>, <2 x short>, <1 x int>, <1 x float>
+      // 2 bytes - <2 x char>, <1 x short>
+      // 1 byte  - <1 x char>
       Current = Integer;
 
       // If this type crosses an eightbyte boundary, it should be
       // split.
-      uint64_t EB_Real = (OffsetBase) / 64;
-      uint64_t EB_Imag = (OffsetBase + Size - 1) / 64;
-      if (EB_Real != EB_Imag)
+      uint64_t EB_Lo = (OffsetBase) / 64;
+      uint64_t EB_Hi = (OffsetBase + Size - 1) / 64;
+      if (EB_Lo != EB_Hi)
         Hi = Lo;
     } else if (Size == 64) {
       // gcc passes <1 x double> in memory. :(
@@ -1967,14 +1980,21 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
         Current = Integer;
       else if (Size <= 128)
         Lo = Hi = Integer;
-    } else if (ET == getContext().FloatTy)
+    } else if (ET == getContext().FloatTy) {
       Current = SSE;
-    else if (ET == getContext().DoubleTy ||
-             (ET == getContext().LongDoubleTy &&
-              getTarget().getTriple().isOSNaCl()))
+    } else if (ET == getContext().DoubleTy) {
       Lo = Hi = SSE;
-    else if (ET == getContext().LongDoubleTy)
-      Current = ComplexX87;
+    } else if (ET == getContext().LongDoubleTy) {
+      const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
+      if (LDF == &llvm::APFloat::IEEEquad)
+        Current = Memory;
+      else if (LDF == &llvm::APFloat::x87DoubleExtended)
+        Current = ComplexX87;
+      else if (LDF == &llvm::APFloat::IEEEdouble)
+        Lo = Hi = SSE;
+      else
+        llvm_unreachable("unexpected long double representation!");
+    }
 
     // If this complex type crosses an eightbyte boundary then it
     // should be split.
@@ -2243,7 +2263,8 @@ llvm::Type *X86_64ABIInfo::GetByteVectorType(QualType Ty) const {
     Ty = QualType(InnerTy, 0);
 
   llvm::Type *IRType = CGT.ConvertType(Ty);
-  if(isa<llvm::VectorType>(IRType))
+  if (isa<llvm::VectorType>(IRType) ||
+      IRType->getTypeID() == llvm::Type::FP128TyID)
     return IRType;
 
   // We couldn't find the preferred IR vector type for 'Ty'.
@@ -6530,7 +6551,7 @@ class TypeStringCache {
   unsigned IncompleteCount;     // Number of Incomplete entries in the Map.
   unsigned IncompleteUsedCount; // Number of IncompleteUsed entries in the Map.
 public:
-  TypeStringCache() : IncompleteCount(0), IncompleteUsedCount(0) {};
+  TypeStringCache() : IncompleteCount(0), IncompleteUsedCount(0) {}
   void addIncomplete(const IdentifierInfo *ID, std::string StubEnc);
   bool removeIncomplete(const IdentifierInfo *ID);
   void addIfComplete(const IdentifierInfo *ID, StringRef Str,
@@ -6544,8 +6565,8 @@ class FieldEncoding {
   bool HasName;
   std::string Enc;
 public:
-  FieldEncoding(bool b, SmallStringEnc &e) : HasName(b), Enc(e.c_str()) {};
-  StringRef str() {return Enc.c_str();};
+  FieldEncoding(bool b, SmallStringEnc &e) : HasName(b), Enc(e.c_str()) {}
+  StringRef str() {return Enc.c_str();}
   bool operator<(const FieldEncoding &rhs) const {
     if (HasName != rhs.HasName) return HasName;
     return Enc < rhs.Enc;

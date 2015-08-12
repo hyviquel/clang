@@ -54,7 +54,7 @@ CompilerInvocationBase::CompilerInvocationBase()
 
 CompilerInvocationBase::CompilerInvocationBase(const CompilerInvocationBase &X)
   : RefCountedBase<CompilerInvocation>(),
-    LangOpts(new LangOptions(*X.getLangOpts())), 
+    LangOpts(new LangOptions(*X.getLangOpts())),
     TargetOpts(new TargetOptions(X.getTargetOpts())),
     DiagnosticOpts(new DiagnosticOptions(X.getDiagnosticOpts())),
     HeaderSearchOpts(new HeaderSearchOptions(X.getHeaderSearchOpts())),
@@ -411,6 +411,13 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       Opts.setDebugInfo(CodeGenOptions::LimitedDebugInfo);
   }
   Opts.DebugColumnInfo = Args.hasArg(OPT_dwarf_column_info);
+  if (Args.hasArg(OPT_gcodeview)) {
+    Opts.EmitCodeView = true;
+    Opts.DwarfVersion = 0;
+  } else if (Opts.getDebugInfo() != CodeGenOptions::NoDebugInfo) {
+    // Default Dwarf version is 4 if we are generating debug information.
+    Opts.DwarfVersion = 4;
+  }
   Opts.SplitDwarfFile = Args.getLastArgValue(OPT_split_dwarf_file);
   if (Args.hasArg(OPT_gdwarf_2))
     Opts.DwarfVersion = 2;
@@ -418,15 +425,13 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     Opts.DwarfVersion = 3;
   else if (Args.hasArg(OPT_gdwarf_4))
     Opts.DwarfVersion = 4;
-  else if (Opts.getDebugInfo() != CodeGenOptions::NoDebugInfo)
-    // Default Dwarf version is 4 if we are generating debug information.
-    Opts.DwarfVersion = 4;
 
   if (const Arg *A =
           Args.getLastArg(OPT_emit_llvm_uselists, OPT_no_emit_llvm_uselists))
     Opts.EmitLLVMUseLists = A->getOption().getID() == OPT_emit_llvm_uselists;
 
   Opts.DisableLLVMOpts = Args.hasArg(OPT_disable_llvm_optzns);
+  Opts.DisableLLVMPasses = Args.hasArg(OPT_disable_llvm_passes);
   Opts.DisableRedZone = Args.hasArg(OPT_disable_red_zone);
   Opts.ForbidGuardVariables = Args.hasArg(OPT_fforbid_guard_variables);
   Opts.UseRegisterSizedBitfieldAccess = Args.hasArg(
@@ -452,10 +457,12 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       Args.hasArg(OPT_fprofile_instr_generate_EQ);
   Opts.InstrProfileOutput = Args.getLastArgValue(OPT_fprofile_instr_generate_EQ);
   Opts.InstrProfileInput = Args.getLastArgValue(OPT_fprofile_instr_use_EQ);
-  Opts.CoverageMapping = Args.hasArg(OPT_fcoverage_mapping);
+  Opts.CoverageMapping =
+      Args.hasFlag(OPT_fcoverage_mapping, OPT_fno_coverage_mapping, false);
   Opts.DumpCoverageMapping = Args.hasArg(OPT_dump_coverage_mapping);
   Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
   Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
+  Opts.NewMSEH = Args.hasArg(OPT_fnew_ms_eh);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
   Opts.CodeModel = getCodeModel(Args, Diags);
@@ -592,6 +599,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
         static_cast<CodeGenOptions::ObjCDispatchMethodKind>(Method));
     }
   }
+
+  Opts.EmulatedTLS =
+      Args.hasFlag(OPT_femulated_tls, OPT_fno_emulated_tls, false);
 
   if (Arg *A = Args.getLastArg(OPT_ftlsmodel_EQ)) {
     StringRef Name = A->getValue();
@@ -1077,13 +1087,11 @@ std::string CompilerInvocation::GetResourcesPath(const char *Argv0,
   // Compute the path to the resource directory.
   StringRef ClangResourceDir(CLANG_RESOURCE_DIR);
   SmallString<128> P(Dir);
-  if (ClangResourceDir != "") {
+  if (ClangResourceDir != "")
     llvm::sys::path::append(P, ClangResourceDir);
-  } else {
-    StringRef ClangLibdirSuffix(CLANG_LIBDIR_SUFFIX);
-    llvm::sys::path::append(P, "..", Twine("lib") + ClangLibdirSuffix, "clang",
-                            CLANG_VERSION_STRING);
-  }
+  else
+    llvm::sys::path::append(P, "..", Twine("lib") + CLANG_LIBDIR_SUFFIX,
+                            "clang", CLANG_VERSION_STRING);
 
   return P.str();
 }
@@ -1113,6 +1121,8 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
       getLastArgUInt64Value(Args, OPT_fbuild_session_timestamp, 0);
   Opts.ModulesValidateSystemHeaders =
       Args.hasArg(OPT_fmodules_validate_system_headers);
+  if (const Arg *A = Args.getLastArg(OPT_fmodule_format_EQ))
+    Opts.ModuleFormat = A->getValue();
 
   for (const Arg *A : Args.filtered(OPT_fmodules_ignore_macro)) {
     StringRef MacroDef = A->getValue();
@@ -1259,6 +1269,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   // OpenCL has some additional defaults.
   if (Opts.OpenCL) {
     Opts.AltiVec = 0;
+    Opts.ZVector = 0;
     Opts.CXXOperatorNames = 1;
     Opts.LaxVectorConversions = 0;
     Opts.DefaultFPContract = 1;
@@ -1362,7 +1373,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     .Case("CL1.2", LangStandard::lang_opencl12)
     .Case("CL2.0", LangStandard::lang_opencl20)
     .Default(LangStandard::lang_unspecified);
-    
+
     if (OpenCLLangStd == LangStandard::lang_unspecified) {
       Diags.Report(diag::err_drv_invalid_value)
       << A->getAsString(Args) << A->getValue();
@@ -1370,7 +1381,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     else
       LangStd = OpenCLLangStd;
   }
-  
+
   CompilerInvocation::setLangDefaults(Opts, IK, LangStd);
 
   // We abuse '-f[no-]gnu-keywords' to force overriding all GNU-extension
@@ -1418,12 +1429,12 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
     if (Args.hasArg(OPT_fno_objc_infer_related_result_type))
       Opts.ObjCInferRelatedResultType = 0;
-    
+
     if (Args.hasArg(OPT_fobjc_subscripting_legacy_runtime))
       Opts.ObjCSubscriptingLegacyRuntime =
         (Opts.ObjCRuntime.getKind() == ObjCRuntime::FragileMacOSX);
   }
-    
+
   if (Args.hasArg(OPT_fgnu89_inline)) {
     if (Opts.CPlusPlus)
       Diags.Report(diag::err_drv_argument_not_allowed_with) << "-fgnu89-inline"
@@ -1446,6 +1457,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   if (Args.hasArg(OPT_faltivec))
     Opts.AltiVec = 1;
+
+  if (Args.hasArg(OPT_fzvector))
+    Opts.ZVector = 1;
 
   if (Args.hasArg(OPT_pthread))
     Opts.POSIXThreads = 1;
@@ -1573,7 +1587,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.PIELevel = getLastArgIntValue(Args, OPT_pie_level, 0, Diags);
   Opts.Static = Args.hasArg(OPT_static_define);
   Opts.DumpRecordLayoutsSimple = Args.hasArg(OPT_fdump_record_layouts_simple);
-  Opts.DumpRecordLayouts = Opts.DumpRecordLayoutsSimple 
+  Opts.DumpRecordLayouts = Opts.DumpRecordLayoutsSimple
                         || Args.hasArg(OPT_fdump_record_layouts);
   Opts.DumpVTableLayouts = Args.hasArg(OPT_fdump_vtable_layouts);
   Opts.SpellChecking = !Args.hasArg(OPT_fno_spell_checking);
@@ -1617,7 +1631,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       .Case("yes", LangOptions::ASMM_On)
       .Default(255)) {
     default:
-      Diags.Report(diag::err_drv_invalid_value) 
+      Diags.Report(diag::err_drv_invalid_value)
         << "-faddress-space-map-mangling=" << A->getValue();
       break;
     case LangOptions::ASMM_Target:
@@ -1650,12 +1664,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     Opts.setMSPointerToMemberRepresentationMethod(InheritanceModel);
   }
 
-  // Check if -fopenmp= is specified.
-  //if (const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ)) {
-  //  Opts.OpenMP = llvm::StringSwitch<bool>(A->getValue())
-  //      .Case("libiomp5", true)
-  //      .Default(false);
-  //}
   Opts.OpenMP = Args.hasArg(OPT_fopenmp);
   Opts.OpenMPTargetMode = Args.hasArg(OPT_omp_target_mode);
   Opts.OpenMPHostIRDump = Args.hasArg(OPT_omp_dump_host_ir);
@@ -1695,6 +1703,50 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     }
     else
       Diags.Report(clang::diag::err_drv_omp_target_requires_main_file_path);
+  }
+
+  // Check NVPTX codegen for OpenMP specific options.
+  if (Opts.OpenMP) {
+    if (Arg *A = Args.getLastArg(options::OPT_omp_nvptx_data_sharing_type)) {
+      StringRef S = A->getValue();
+      unsigned R = llvm::StringSwitch<unsigned>(S)
+                       .Case("fast", 1)
+                       .Case("regular", 0)
+                       .Default(~0U);
+      if (R == ~0U)
+        Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << S;
+      else
+        Opts.OpenMPNVPTXFastShare = R;
+    }
+    if (Arg *A = Args.getLastArg(
+            options::OPT_omp_nvptx_data_sharing_sizes_per_thread)) {
+      for (auto *SS : A->getValues()) {
+        StringRef SR = SS;
+        Opts.OMPNVPTXSharingSizesPerThread.push_back(0u);
+        if (SR.getAsInteger(0, Opts.OMPNVPTXSharingSizesPerThread.back()))
+          Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
+                                                    << SR;
+      }
+    } else {
+      Opts.OMPNVPTXSharingSizesPerThread.push_back(1024u);
+      Opts.OMPNVPTXSharingSizesPerThread.push_back(32u);
+    }
+    if (Arg *A = Args.getLastArg(
+            options::OPT_omp_nvptx_data_sharing_size_per_team)) {
+      StringRef SR = A->getValue();
+      if (SR.getAsInteger(0, Opts.OMPNVPTXSharingSizePerTeam))
+        Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << SR;
+    } else {
+      Opts.OMPNVPTXSharingSizePerTeam = 33792u;
+    }
+    if (Arg *A = Args.getLastArg(
+            options::OPT_omp_nvptx_data_sharing_size_per_kernel)) {
+      StringRef SR = A->getValue();
+      if (SR.getAsInteger(0, Opts.OMPNVPTXSharingSizePerKernel))
+        Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << SR;
+    } else {
+      Opts.OMPNVPTXSharingSizePerKernel = 69206016u;
+    }
   }
 
   // Get OpenMP host file path if any and report if a non existent file is
@@ -1937,14 +1989,23 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   Success &= ParseCodeGenArgs(Res.getCodeGenOpts(), Args, DashX, Diags,
                               Res.getTargetOpts());
   ParseHeaderSearchArgs(Res.getHeaderSearchOpts(), Args);
-  if (DashX != IK_AST && DashX != IK_LLVM_IR) {
+  if (DashX == IK_AST || DashX == IK_LLVM_IR) {
+    // ObjCAAutoRefCount and Sanitize LangOpts are used to setup the
+    // PassManager in BackendUtil.cpp. They need to be initializd no matter
+    // what the input type is.
+    if (Args.hasArg(OPT_fobjc_arc))
+      Res.getLangOpts()->ObjCAutoRefCount = 1;
+    parseSanitizerKinds("-fsanitize=", Args.getAllArgValues(OPT_fsanitize_EQ),
+                        Diags, Res.getLangOpts()->Sanitize);
+  } else {
+    // Other LangOpts are only initialzed when the input is not AST or LLVM IR.
     ParseLangArgs(*Res.getLangOpts(), Args, DashX, Diags);
     if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
       Res.getLangOpts()->ObjCExceptions = 1;
   }
   // FIXME: ParsePreprocessorArgs uses the FileManager to read the contents of
   // PCH file and find the original header name. Remove the need to do that in
-  // ParsePreprocessorArgs and remove the FileManager 
+  // ParsePreprocessorArgs and remove the FileManager
   // parameters from the function and the "FileManager.h" #include.
   FileManager FileMgr(Res.getFileSystemOpts());
   ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags);
@@ -1959,14 +2020,14 @@ namespace {
     SmallVector<uint64_t, 16> Data;
     unsigned CurBit;
     uint64_t CurValue;
-    
+
   public:
     ModuleSignature() : CurBit(0), CurValue(0) { }
-    
+
     void add(uint64_t Value, unsigned Bits);
     void add(StringRef Value);
     void flush();
-    
+
     llvm::APInt getAsInteger() const;
   };
 }
@@ -1977,10 +2038,10 @@ void ModuleSignature::add(uint64_t Value, unsigned int NumBits) {
     CurBit += NumBits;
     return;
   }
-  
+
   // Add the current word.
   Data.push_back(CurValue);
-  
+
   if (CurBit)
     CurValue = Value >> (64-CurBit);
   else
@@ -1991,7 +2052,7 @@ void ModuleSignature::add(uint64_t Value, unsigned int NumBits) {
 void ModuleSignature::flush() {
   if (CurBit == 0)
     return;
-  
+
   Data.push_back(CurValue);
   CurBit = 0;
   CurValue = 0;
@@ -2029,7 +2090,7 @@ std::string CompilerInvocation::getModuleHash() const {
 
   for (StringRef Feature : LangOpts->ModuleFeatures)
     code = hash_combine(code, Feature);
-  
+
   // Extend the signature with the target options.
   code = hash_combine(code, TargetOpts->Triple, TargetOpts->CPU,
                       TargetOpts->ABI);
@@ -2041,7 +2102,7 @@ std::string CompilerInvocation::getModuleHash() const {
   const HeaderSearchOptions &hsOpts = getHeaderSearchOpts();
   code = hash_combine(code, ppOpts.UsePredefines, ppOpts.DetailedRecord);
 
-  for (std::vector<std::pair<std::string, bool/*isUndef*/> >::const_iterator 
+  for (std::vector<std::pair<std::string, bool/*isUndef*/>>::const_iterator
             I = getPreprocessorOpts().Macros.begin(),
          IEnd = getPreprocessorOpts().Macros.end();
        I != IEnd; ++I) {
