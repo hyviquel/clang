@@ -5748,15 +5748,19 @@ class SparcV8TargetInfo : public SparcTargetInfo {
 public:
   SparcV8TargetInfo(const llvm::Triple &Triple) : SparcTargetInfo(Triple) {
     DataLayoutString = "E-m:e-p:32:32-i64:64-f128:64-n32-S64";
-    // NetBSD uses long (same as llvm default); everyone else uses int.
-    if (getTriple().getOS() == llvm::Triple::NetBSD) {
-      SizeType = UnsignedLong;
-      IntPtrType = SignedLong;
-      PtrDiffType = SignedLong;
-    } else {
+    // NetBSD / OpenBSD use long (same as llvm default); everyone else uses int.
+    switch (getTriple().getOS()) {
+    default:
       SizeType = UnsignedInt;
       IntPtrType = SignedInt;
       PtrDiffType = SignedInt;
+      break;
+    case llvm::Triple::NetBSD:
+    case llvm::Triple::OpenBSD:
+      SizeType = UnsignedLong;
+      IntPtrType = SignedLong;
+      PtrDiffType = SignedLong;
+      break;
     }
   }
 
@@ -7579,9 +7583,8 @@ TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   Target->getDefaultFeatures(Features);
 
   // Apply the user specified deltas.
-  for (unsigned I = 0, N = Opts->FeaturesAsWritten.size();
-       I < N; ++I) {
-    const char *Name = Opts->FeaturesAsWritten[I].c_str();
+  for (const auto &F : Opts->FeaturesAsWritten) {
+    const char *Name = F.c_str();
     // Apply the feature via the target.
     bool Enabled = Name[0] == '+';
     Target->setFeatureEnabled(Features, Name + 1, Enabled);
@@ -7592,9 +7595,9 @@ TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
   // FIXME: If we are completely confident that we have the right set, we only
   // need to pass the minuses.
   Opts->Features.clear();
-  for (llvm::StringMap<bool>::const_iterator it = Features.begin(),
-         ie = Features.end(); it != ie; ++it)
-    Opts->Features.push_back((it->second ? "+" : "-") + it->first().str());
+  for (const auto &F : Features)
+    Opts->Features.push_back((F.getValue() ? "+" : "-") + F.getKey().str());
+
   if (!Target->handleTargetFeatures(Opts->Features, Diags))
     return nullptr;
 
