@@ -5354,6 +5354,14 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
   llvm::BasicBlock *RedBB2;
   llvm::Instruction *IP1;
   llvm::Instruction *IP2;
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+      // for spark, we do not need to run the reduction
+      return;
+  }
+
   if (!Switch) {
     // for gpu, the synchronized reduction is inserted here
     if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
