@@ -2224,6 +2224,7 @@ public:
   bool IsCombinedDirectiveLoopBoundCapture(const OMPExecutableDirective &S,
                                            const DeclRefExpr *DE);
 
+  void DefineJNITypes();
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
   llvm::Function *GenerateCapturedStmtFunction(const CapturedStmt &S);
   llvm::Value *GenerateCapturedStmtArgument(const CapturedStmt &S);

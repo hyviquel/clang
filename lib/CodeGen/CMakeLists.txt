@@ -51,6 +51,7 @@ add_clang_library(clangCodeGen
   CGExprComplex.cpp
   CGExprConstant.cpp
   CGExprScalar.cpp
+  CGJNI.cpp
   CGLoopInfo.cpp
   CGObjC.cpp
   CGObjCGNU.cpp
