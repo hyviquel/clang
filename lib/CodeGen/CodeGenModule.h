@@ -1213,8 +1213,12 @@ public:
     llvm::DenseMap<const Decl *, const Expr *> OpenMPThreadPrivate;
     /// \brief A set of OpenMP private variables.
     typedef llvm::DenseMap<const Decl *, llvm::Value *> OMPPrivateVarsTy;
+    /// \brief A set of OpenMP kernel argument variables.
+    typedef llvm::DenseMap<const Expr *, llvm::Value *> OMPKernelArgVarsTy;
     struct OMPStackElemTy {
       OMPPrivateVarsTy PrivateVars;
+      llvm::SmallVector<const Expr *, 8> ExternalVarExpr;
+      OMPKernelArgVarsTy KernelArgVars;
       llvm::BasicBlock *IfEnd;
       Expr *IfClauseCondition;
       llvm::SmallVector<llvm::Value *, 16> offloadingMapArguments;
@@ -1322,6 +1326,15 @@ public:
       if (OpenMPStack.size()< 2) return 0;
       return OpenMPStack[OpenMPStack.size() - 2].PrivateVars.count(VD) > 0 ? OpenMPStack[OpenMPStack.size() - 2].PrivateVars[VD] : 0;
     }
+    /// \brief Checks, if the specified variable is currently an argument.
+    /// \return 0 if the variable is not an argument, or address of the arguments
+    /// otherwise.
+    llvm::Value *getOpenMPKernelArgVar(const Expr *VarExpr) {
+      if (OpenMPStack.empty()) return 0;
+      if (OpenMPStack.back().KernelArgVars.count(VarExpr) > 0 && OpenMPStack.back().KernelArgVars[VarExpr])
+        return OpenMPStack.back().KernelArgVars[VarExpr];
+      return 0;
+    }
     void startOpenMPRegion(bool NewTask) {
       OpenMPStack.push_back(OMPStackElemTy(CGM));
       OpenMPStack.back().NewTask = NewTask;
@@ -1342,6 +1355,16 @@ public:
       assert(OpenMPStack.size() >= 2 &&
              "OpenMP private variables region is not started.");
       OpenMPStack[OpenMPStack.size() - 2].PrivateVars[VD] = 0;
+    }
+    void addOpenMPKernelArgVar(const Expr *VarExpr, llvm::Value *Addr) {
+      assert(!OpenMPStack.empty() &&
+             "OpenMP private variables region is not started.");
+      OpenMPStack.back().KernelArgVars[VarExpr] = Addr;
+    }
+    void delOpenMPKernelArgVar(const Expr *VarExpr) {
+      assert(!OpenMPStack.empty() &&
+             "OpenMP private variables region is not started.");
+      OpenMPStack.back().KernelArgVars[VarExpr] = 0;
     }
     void setIfDest(llvm::BasicBlock *EndBB) {OpenMPStack.back().IfEnd = EndBB;}
     llvm::BasicBlock *takeIfDest() {

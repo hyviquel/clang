@@ -2225,6 +2225,8 @@ public:
                                            const DeclRefExpr *DE);
 
   void DefineJNITypes();
+  void GenArgumentElementSize(const VarDecl *VD);
+
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
   llvm::Function *GenerateCapturedStmtFunction(const CapturedStmt &S);
   llvm::Value *GenerateCapturedStmtArgument(const CapturedStmt &S);
