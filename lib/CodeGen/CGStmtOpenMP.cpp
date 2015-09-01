@@ -905,8 +905,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
   CodeGenFunction &CGF;
   CodeGenModule &CGM;
   bool verbose ;
-  //llvm::Function::arg_iterator Args;
-  llvm::SmallVector<const Expr*, 8> externalVarExpr;
+
   llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> externalVarUse;
 
   ArraySubscriptExpr *CurrArrayExpr;
@@ -926,11 +925,9 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
       //CGF.GenArgumentElementSize(VD);
 
       if(CurrArrayExpr != NULL) {
-        externalVarExpr.push_back(CurrArrayExpr); //CGM.OpenMPSupport.addOpenMPKernelArgVar(CurrArrayExpr, Args++);
         externalVarUse[VD].push_back(CurrArrayExpr);
       }
       else {
-        externalVarExpr.push_back(D);  //CGM.OpenMPSupport.addOpenMPKernelArgVar(D, Args++);
         externalVarUse[VD].push_back(D);
       }
     }
@@ -1545,15 +1542,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             FuncTy_args.push_back(PointerTy_jobject);
           }
 
-          /*
-          for(const Expr *CurrExpr : Finder.externalVarExpr) {
-            QualType oldType = CurrExpr->getType();
-            llvm::Type *newType = getTypes().ConvertType(oldType);
-            FuncTy_args.push_back(newType);
-          }
-          */
-
-
           llvm::FunctionType* FnTy = llvm::FunctionType::get(
                 /*Result=*/llvm::IntegerType::get(getLLVMContext(), 32),
                 /*Params=*/FuncTy_args,
@@ -1642,17 +1630,13 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             ptr_274->setAlignment(8);
             std::vector<llvm::Value*> ptr_275_params;
             ptr_275_params.push_back(ptr_273);
-            ptr_273->dump();
             ptr_275_params.push_back(ptr_274);
-            ptr_274->dump();
             ptr_275_params.push_back(const_ptr_256);
-            const_ptr_256->dump();
             llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
             ptr_275->setCallingConv(llvm::CallingConv::C);
             ptr_275->setTailCall(false);
             llvm::AttributeSet ptr_275_PAL;
             ptr_275->setAttributes(ptr_275_PAL);
-            ptr_275->dump();
             llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
 
             for(auto use = it->second.begin(); use != it->second.end(); use++)
@@ -1663,9 +1647,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           CGF.EmitStmt(Body);
 
           llvm::ReturnInst *ret = CGF.Builder.CreateRet(val);
-
-
-
 
           Body->dump();
         }
