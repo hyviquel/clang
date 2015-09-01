@@ -2626,6 +2626,14 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     if (isTargetMode)
       CGM.getOpenMPRuntime().StartNewTargetRegion();
 
+    // Codegen target clauses init, this currently include
+    // - device clause
+    // - map clause
+    for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(), E =
+        S.clauses().end(); I != E; ++I)
+      if (*I && isAllowedClauseForDirective(OMPD_target,(*I)->getClauseKind()))
+        EmitInitOMPClause(*(*I), S);
+
     // Create the target function
     std::string TargetRegionName;
 
@@ -4239,21 +4247,10 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
       BaseAddrs.size() == Vars.size() && BaseAddrs.size() == Addrs.size()
           && BaseAddrs.size() == Sizes.size() && "Vars addresses mismatch!");
 
+  bool isTargetMode = CGM.getLangOpts().OpenMPTargetMode;
+
   for (unsigned i = 0; i < BaseAddrs.size(); ++i) {
     const Expr * Var = Vars[i];
-    llvm::Value * VB = EmitAnyExprToTemp(BaseAddrs[i]).getScalarVal();
-    llvm::Value * VP = EmitAnyExprToTemp(Addrs[i]).getScalarVal();
-    llvm::Value * VS = EmitAnyExprToTemp(Sizes[i]).getScalarVal();
-
-    // Subtract the two pointers to obtain the size or
-    // use the value directly if it is a constant
-
-    if (!isa<llvm::ConstantInt>(VS)) {
-      llvm::Value *RBI = Builder.CreatePtrToInt(VP, CGM.Int64Ty);
-      llvm::Value *REI = Builder.CreatePtrToInt(VS, CGM.Int64Ty);
-      VS = Builder.CreateSub(REI, RBI);
-    }
-
 
     //Save the declaration associated with a map so it can be related with the
     //parameters of a target region later on. As in the OpenMP spec, here we
@@ -4279,6 +4276,24 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
     }
 
     assert(VarDecl && "Unexpected expression in the map clause");
+
+    if(isTargetMode) {
+      CGM.OpenMPSupport.addOffloadingMap(VarDecl, MapType);
+      continue;
+    }
+
+    llvm::Value * VB = EmitAnyExprToTemp(BaseAddrs[i]).getScalarVal();
+    llvm::Value * VP = EmitAnyExprToTemp(Addrs[i]).getScalarVal();
+    llvm::Value * VS = EmitAnyExprToTemp(Sizes[i]).getScalarVal();
+
+    // Subtract the two pointers to obtain the size or
+    // use the value directly if it is a constant
+
+    if (!isa<llvm::ConstantInt>(VS)) {
+      llvm::Value *RBI = Builder.CreatePtrToInt(VP, CGM.Int64Ty);
+      llvm::Value *REI = Builder.CreatePtrToInt(VS, CGM.Int64Ty);
+      VS = Builder.CreateSub(REI, RBI);
+    }
 
     //     - If it is a pointer with a range and this pointer was not mapped in previous clauses:
     //       Add one entry for the pointer and one (extra) entry for the range

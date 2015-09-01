@@ -1268,6 +1268,7 @@ public:
       Expr *NumTeams;
       Expr *ThreadLimit;
       llvm::Value **WaitDepsArgs;
+      llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVars;
       llvm::SmallVector<const Expr *, 8> OffloadingMapDecls;
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapBasePtrs;
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapPtrs;
@@ -1440,15 +1441,18 @@ public:
     void setWaitDepsArgs(llvm::Value **Args);
     llvm::Value **getWaitDepsArgs();
     void addOffloadingMap(const Expr *DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type);
+    void addOffloadingMapVariable(const ValueDecl* VD, unsigned Type);
     void getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types);
     void setOffloadingMapArguments(llvm::ArrayRef<llvm::Value *> Args) {
       for (auto Arg : Args) {
         OpenMPStack.back().offloadingMapArguments.push_back(Arg);
       }
     }
+    void getAllOffloadingMapVariables(llvm::SmallVector<const Expr*, 8> &DExprs, llvm::SmallVector<unsigned, 8> &Types);
     llvm::SmallVector<llvm::Value *, 16> &getOffloadingMapArguments() {
       return OpenMPStack.back().offloadingMapArguments;
     }
+    unsigned getMapType(const VarDecl* VD);
     void setMapsBegin(bool Flag);
     bool getMapsBegin();
     void setMapsEnd(bool Flag);

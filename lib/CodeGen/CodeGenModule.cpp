@@ -4261,12 +4261,30 @@ void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, ll
   OpenMPStack.back().OffloadingMapSizes.push_back(Size);
   OpenMPStack.back().OffloadingMapTypes.push_back(Type);
 }
+void CodeGenModule::OpenMPSupportStackTy::addOffloadingMapVariable(const ValueDecl* VD, unsigned Type){
+  OpenMPStack.back().OffloadingMapVars[VD] = Type;
+}
 void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types){
   DExprs = OpenMPStack.back().OffloadingMapDecls;
   BasePtrs = OpenMPStack.back().OffloadingMapBasePtrs;
   Ptrs  = OpenMPStack.back().OffloadingMapPtrs;
   Sizes = OpenMPStack.back().OffloadingMapSizes;
   Types = OpenMPStack.back().OffloadingMapTypes;
+}
+void CodeGenModule::OpenMPSupportStackTy::getAllOffloadingMapVariables(llvm::SmallVector<const Expr*, 8> &DExprs, llvm::SmallVector<unsigned, 8> &Types){
+  for(OMPStackElemTy& elt : OpenMPStack) {
+    DExprs.append(elt.OffloadingMapDecls.begin(), elt.OffloadingMapDecls.end());
+    Types.append(elt.OffloadingMapTypes.begin(), elt.OffloadingMapTypes.end());
+  }
+}
+unsigned CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
+  for(OMPStackElemTy& elt : OpenMPStack) {
+    if(elt.OffloadingMapVars.find(VD) != elt.OffloadingMapVars.end()) {
+      return elt.OffloadingMapVars[VD];
+    }
+  }
+  llvm::errs() << "Var " << VD->getName() << " is not offloaded\n";
+  return 0;
 }
 void CodeGenModule::OpenMPSupportStackTy::setMapsBegin(bool Flag){
   OpenMPStack.back().MapsBegin = Flag;
