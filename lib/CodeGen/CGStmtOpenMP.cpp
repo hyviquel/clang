@@ -906,7 +906,8 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
   CodeGenModule &CGM;
   bool verbose ;
 
-  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> externalVarUse;
+  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
+  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
 
   ArraySubscriptExpr *CurrArrayExpr;
 
@@ -921,19 +922,31 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
 
     if(not CGM.OpenMPSupport.getOpenMPPrivateVar(VD)) {
-      if (verbose) llvm::errs() << " --> That's an argument\n";
-      //CGF.GenArgumentElementSize(VD);
+      unsigned MapType = CGM.OpenMPSupport.getMapType(VD);
 
-      if(CurrArrayExpr != NULL) {
-        externalVarUse[VD].push_back(CurrArrayExpr);
+      if (verbose) llvm::errs() << " --> That's an argument";
+
+      const Expr *RefExpr;
+
+      if(CurrArrayExpr != NULL)
+         RefExpr = CurrArrayExpr;
+      else
+         RefExpr = D;
+
+      if(MapType == OMP_TGT_MAPTYPE_TO) {
+        InputVarUse[VD].push_back(RefExpr);
+        if (verbose) llvm::errs() << " --> input";
+      }
+      else if (MapType == OMP_TGT_MAPTYPE_FROM) {
+        OutputVarDef[VD].push_back(RefExpr);
+        if (verbose) llvm::errs() << " --> output";
       }
       else {
-        externalVarUse[VD].push_back(D);
+        if (verbose) llvm::errs() << " --> euuh something";
       }
     }
-    else {
-      if(verbose) llvm::errs() << "\n";
-    }
+
+    if(verbose) llvm::errs() << "\n";
 
     return true;
   }
@@ -1484,45 +1497,22 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
           Body = For->getBody();
 
-          //llvm::Value *Arg = GenerateCapturedStmtArgument(*CS);
-          //Args.push_back(&Arg);
-
+          // Detect input/output expression from the loop body
           Stmt *Body2 = const_cast<Stmt*>(Body);
           FindKernelArguments Finder(*this);
           Finder.TraverseStmt(Body2);
 
-          /*
-          // Get the map clause information
-          ArrayRef<const Expr*>  MapClauseDecls;
-          ArrayRef<llvm::Value*> MapClauseBasePointersArray;
-          ArrayRef<llvm::Value*> MapClausePointersArray;
-          ArrayRef<llvm::Value*> MapClauseSizesArray;
-          ArrayRef<unsigned> MapClauseTypesArray;
-
-          CGM.OpenMPSupport.getOffloadingMapArrays(MapClauseDecls,
-              MapClauseBasePointersArray, MapClausePointersArray, MapClauseSizesArray,
-              MapClauseTypesArray);
-
-          llvm::errs() << ">>> Number of map variables " << MapClauseBasePointersArray.size() << "\n";
-
-          for (unsigned i=0; i<MapClauseBasePointersArray.size() ; ++i){
-            const DeclRefExpr *D =  cast<DeclRefExpr>(MapClauseDecls[i]);
-            const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl());
-            GenArgumentElementSize(VD);
-          }
-           */
-
-          for (auto it = Finder.externalVarUse.begin(); it != Finder.externalVarUse.end(); ++it)
+          // Generate function that return element bit size of each input/output
+          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
           {
             GenArgumentElementSize(it->first);
           }
 
-          CodeGenFunction CGF(CGM, true);
 
-          // Create the function declaration.
-
+          // Create the mapping function
           llvm::Module *mod = &(CGM.getModule());
 
+          // Get JNI type
           llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
           llvm::PointerType* PointerTy_JNINativeInterface = llvm::PointerType::get(StructTy_JNINativeInterface, 0);
           llvm::PointerType* PointerTy_1 = llvm::PointerType::get(PointerTy_JNINativeInterface, 0);
@@ -1530,30 +1520,26 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
           llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
 
-          //FunctionArgList Args;
+          // Initialize arguments
           std::vector<llvm::Type*> FuncTy_args;
 
           // Add compulsary arguments
           FuncTy_args.push_back(PointerTy_1);
           FuncTy_args.push_back(PointerTy_jobject);
 
-          for (auto it = Finder.externalVarUse.begin(); it != Finder.externalVarUse.end(); ++it)
+          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
           {
             FuncTy_args.push_back(PointerTy_jobject);
           }
 
           llvm::FunctionType* FnTy = llvm::FunctionType::get(
-                /*Result=*/llvm::IntegerType::get(getLLVMContext(), 32),
+                /*Result=*/PointerTy_jobject,
                 /*Params=*/FuncTy_args,
                 /*isVarArg=*/false);
 
           llvm::Function *MapFn =
             llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
                                    ".mapping", &CGM.getModule());
-
-          CGF.CurFn = MapFn;
-          CGF.EnsureInsertPoint();
-
 
           llvm::AttributeSet map_PAL;
           {
@@ -1573,19 +1559,22 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           }
           MapFn->setAttributes(map_PAL);
 
+
+          // Initialize a new CodeGenFunction used to generate the mapping
+          CodeGenFunction CGF(CGM, true);
+          CGF.CurFn = MapFn;
+          CGF.EnsureInsertPoint();
+
+          // Generate useful type and constant
           llvm::PointerType* PointerTy_4 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
           llvm::PointerType* PointerTy_190 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
-
           llvm::ConstantInt* const_int32_254 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
+          llvm::ConstantInt* const_int32_258 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
           llvm::ConstantInt* const_int32_255 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
           llvm::ConstantInt *val = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, 0));
 
-          // Set arguments name
-
-          //llvm::BasicBlock *entry = llvm::BasicBlock::Create(getLLVMContext(), "entry", MapFn, 0);
-          //CGBuilderTy NBuilder(entry);
-
+          // Allocate and load compulsry JNI arguments
           llvm::Function::arg_iterator args = MapFn->arg_begin();
           args->setName("env");
           llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
@@ -1608,17 +1597,20 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           std::vector<llvm::Value*> ptr_271_indices;
           ptr_271_indices.push_back(const_int32_254);
           ptr_271_indices.push_back(const_int32_255);
-          //llvm::Instruction* ptr_271 = llvm::GetElementPtrInst::CreateInBounds(nullptr, ptr_270, ptr_271_indices, "", &MapFn->getBasicBlockList().back());
+
           llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
           llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
           ptr_272->setAlignment(8);
           llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
           ptr_273->setAlignment(8);
 
-
-          for (auto it = Finder.externalVarUse.begin(); it != Finder.externalVarUse.end(); ++it)
+          // Allocate, load and cast input variables (i.e. the arguments)
+          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
           {
-            args->setName(it->first->getName());
+            const VarDecl *VD = it->first;
+            llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+
+            args->setName(VD->getName());
             llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
             alloca_obj->setAlignment(8);
             llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
@@ -1639,16 +1631,106 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             ptr_275->setAttributes(ptr_275_PAL);
             llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
 
-            for(auto use = it->second.begin(); use != it->second.end(); use++)
+            for(auto use = DefExprs.begin(); use != DefExprs.end(); use++)
               CGM.OpenMPSupport.addOpenMPKernelArgVar(*use, ptr_265);
             args++;
           }
 
+          // Allocate output variables
+          for (auto it = Finder.OutputVarDef.begin(); it != Finder.OutputVarDef.end(); ++it)
+          {
+            const VarDecl *VD = it->first;
+            llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+
+            // Find the type of one element
+            QualType varType = VD->getType();
+            while(varType->isAnyPointerType()) {
+              varType = varType->getPointeeType();
+            }
+
+            llvm::Type *TyObject = ConvertType(varType);
+            llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject);
+            alloca_res->setAlignment(8);
+
+            for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
+              CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
+          }
+
           CGF.EmitStmt(Body);
-
-          llvm::ReturnInst *ret = CGF.Builder.CreateRet(val);
-
           Body->dump();
+
+          for (auto it = Finder.OutputVarDef.begin(); it != Finder.OutputVarDef.end(); ++it)
+          {
+            const VarDecl *VD = it->first;
+            llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+            llvm::Type *TyObject = ConvertType(VD->getType());
+            llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(DefExprs.front());
+
+            llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_4, "");
+            llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_269, "");
+            ptr_274->setAlignment(8);
+            llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
+            llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
+            ptr_276->setAlignment(8);
+            std::vector<llvm::Value*> ptr_277_params;
+            ptr_277_params.push_back(ptr_269);
+            ptr_277_params.push_back(const_int32_258);
+            llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+            ptr_277->setCallingConv(llvm::CallingConv::C);
+            ptr_277->setTailCall(true);
+            llvm::AttributeSet ptr_277_PAL;
+            {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+              {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+              }
+
+              Attrs.push_back(PAS);
+              ptr_277_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+            }
+            ptr_277->setAttributes(ptr_277_PAL);
+
+            llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_269, "");
+            ptr_278->setAlignment(8);
+            llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
+            llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
+            ptr_280->setAlignment(8);
+            std::vector<llvm::Value*> void_281_params;
+            void_281_params.push_back(ptr_269);
+            void_281_params.push_back(ptr_277);
+            void_281_params.push_back(const_int32_254);
+            void_281_params.push_back(const_int32_258);
+            void_281_params.push_back(ptr_273);
+            llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
+            void_281->setCallingConv(llvm::CallingConv::C);
+            void_281->setTailCall(false);
+            llvm::AttributeSet void_281_PAL;
+            {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+              {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+              }
+
+              Attrs.push_back(PAS);
+              void_281_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+            }
+            void_281->setAttributes(void_281_PAL);
+
+            llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
+
+            //for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
+            //CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
+          }
+
+          //llvm::ReturnInst *ret = CGF.Builder.CreateRet(val);
         }
       } else {
       llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
@@ -4275,10 +4357,14 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
       }
     }
 
+    const ValueDecl *VD = VarDecl->getDecl();
+
     assert(VarDecl && "Unexpected expression in the map clause");
 
+    CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
+
+    // Do not emit specific code for targets
     if(isTargetMode) {
-      CGM.OpenMPSupport.addOffloadingMap(VarDecl, MapType);
       continue;
     }
 
