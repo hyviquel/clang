@@ -32,7 +32,7 @@
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
-#include "llvm/Support/TargetParser.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -41,6 +41,7 @@
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/TargetParser.h"
 
 #ifdef LLVM_ON_UNIX
 #include <unistd.h> // For getuid().
@@ -50,21 +51,6 @@ using namespace clang::driver;
 using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
-
-static void addAssemblerKPIC(const ArgList &Args, ArgStringList &CmdArgs) {
-  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
-                                    options::OPT_fpic, options::OPT_fno_pic,
-                                    options::OPT_fPIE, options::OPT_fno_PIE,
-                                    options::OPT_fpie, options::OPT_fno_pie);
-  if (!LastPICArg)
-    return;
-  if (LastPICArg->getOption().matches(options::OPT_fPIC) ||
-      LastPICArg->getOption().matches(options::OPT_fpic) ||
-      LastPICArg->getOption().matches(options::OPT_fPIE) ||
-      LastPICArg->getOption().matches(options::OPT_fpie)) {
-    CmdArgs.push_back("-KPIC");
-  }
-}
 
 /// CheckPreprocessingOptions - Perform some validation of preprocessing
 /// arguments that is shared with gcc.
@@ -761,13 +747,13 @@ static bool isNoCommonDefault(const llvm::Triple &Triple) {
 // Get SubArch (vN).
 static int getARMSubArchVersionNumber(const llvm::Triple &Triple) {
   llvm::StringRef Arch = Triple.getArchName();
-  return llvm::ARMTargetParser::parseArchVersion(Arch);
+  return llvm::ARM::parseArchVersion(Arch);
 }
 
 // True if M-profile.
 static bool isARMMProfile(const llvm::Triple &Triple) {
   llvm::StringRef Arch = Triple.getArchName();
-  unsigned Profile = llvm::ARMTargetParser::parseArchProfile(Arch);
+  unsigned Profile = llvm::ARM::parseArchProfile(Arch);
   return Profile == llvm::ARM::PK_M;
 }
 
@@ -796,8 +782,8 @@ static void getARMArchCPUFromArgs(const ArgList &Args, llvm::StringRef &Arch,
 static void getARMHWDivFeatures(const Driver &D, const Arg *A,
                                 const ArgList &Args, StringRef HWDiv,
                                 std::vector<const char *> &Features) {
-  unsigned HWDivID = llvm::ARMTargetParser::parseHWDiv(HWDiv);
-  if (!llvm::ARMTargetParser::getHWDivFeatures(HWDivID, Features))
+  unsigned HWDivID = llvm::ARM::parseHWDiv(HWDiv);
+  if (!llvm::ARM::getHWDivFeatures(HWDivID, Features))
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
@@ -805,8 +791,8 @@ static void getARMHWDivFeatures(const Driver &D, const Arg *A,
 static void getARMFPUFeatures(const Driver &D, const Arg *A,
                               const ArgList &Args, StringRef FPU,
                               std::vector<const char *> &Features) {
-  unsigned FPUID = llvm::ARMTargetParser::parseFPU(FPU);
-  if (!llvm::ARMTargetParser::getFPUFeatures(FPUID, Features))
+  unsigned FPUID = llvm::ARM::parseFPU(FPU);
+  if (!llvm::ARM::getFPUFeatures(FPUID, Features))
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
@@ -817,7 +803,7 @@ static void checkARMArchName(const Driver &D, const Arg *A, const ArgList &Args,
                              llvm::StringRef ArchName,
                              const llvm::Triple &Triple) {
   std::string MArch = arm::getARMArch(ArchName, Triple);
-  if (llvm::ARMTargetParser::parseArch(MArch) == llvm::ARM::AK_INVALID)
+  if (llvm::ARM::parseArch(MArch) == llvm::ARM::AK_INVALID)
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
@@ -827,8 +813,15 @@ static void checkARMCPUName(const Driver &D, const Arg *A, const ArgList &Args,
                             const llvm::Triple &Triple) {
   std::string CPU = arm::getARMTargetCPU(CPUName, ArchName, Triple);
   std::string Arch = arm::getARMArch(ArchName, Triple);
-  if (strcmp(arm::getLLVMArchSuffixForARM(CPU, Arch), "") == 0)
+  if (arm::getLLVMArchSuffixForARM(CPU, Arch).empty())
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+
+static bool useAAPCSForMachO(const llvm::Triple &T) {
+  // The backend is hardwired to assume AAPCS for M-class processors, ensure
+  // the frontend matches that.
+  return T.getEnvironment() == llvm::Triple::EABI ||
+         T.getOS() == llvm::Triple::UnknownOS || isARMMProfile(T);
 }
 
 // Select the float ABI as determined by -msoft-float, -mhard-float, and
@@ -850,6 +843,13 @@ StringRef tools::arm::getARMFloatABI(const Driver &D, const ArgList &Args,
         FloatABI = "soft";
       }
     }
+
+    // It is incorrect to select hard float ABI on MachO platforms if the ABI is
+    // "apcs-gnu".
+    if (Triple.isOSBinFormatMachO() && !useAAPCSForMachO(Triple) &&
+        FloatABI == "hard")
+      D.Diag(diag::err_drv_unsupported_opt_for_target) << A->getAsString(Args)
+                                                       << Triple.getArchName();
   }
 
   // If unspecified, choose the default based on the platform.
@@ -1124,10 +1124,7 @@ void Clang::AddARMTargetArgs(const ArgList &Args, ArgStringList &CmdArgs,
   if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
     ABIName = A->getValue();
   } else if (Triple.isOSBinFormatMachO()) {
-    // The backend is hardwired to assume AAPCS for M-class processors, ensure
-    // the frontend matches that.
-    if (Triple.getEnvironment() == llvm::Triple::EABI ||
-        Triple.getOS() == llvm::Triple::UnknownOS || isARMMProfile(Triple)) {
+    if (useAAPCSForMachO(Triple)) {
       ABIName = "aapcs";
     } else {
       ABIName = "apcs-gnu";
@@ -2627,6 +2624,12 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
       } else if (Value.startswith("-mcpu") || Value.startswith("-mfpu") ||
                  Value.startswith("-mhwdiv") || Value.startswith("-march")) {
         // Do nothing, we'll validate it later.
+      } else if (Value == "--trap") {
+        CmdArgs.push_back("-target-feature");
+        CmdArgs.push_back("+use-tcc-in-div");
+      } else if (Value == "--break") {
+        CmdArgs.push_back("-target-feature");
+        CmdArgs.push_back("-use-tcc-in-div");
       } else {
         D.Diag(diag::err_drv_unsupported_option_argument)
             << A->getOption().getName() << Value;
@@ -3178,9 +3181,163 @@ static void addPGOAndCoverageFlags(Compilation &C, const Driver &D,
   }
 }
 
+/// Parses the various -fpic/-fPIC/-fpie/-fPIE arguments.  Then,
+/// smooshes them together with platform defaults, to decide whether
+/// this compile should be using PIC mode or not. Returns a tuple of
+/// (RelocationModel, PICLevel, IsPIE).
+static std::tuple<llvm::Reloc::Model, unsigned, bool>
+ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
+             const ArgList &Args) {
+  // FIXME: why does this code...and so much everywhere else, use both
+  // ToolChain.getTriple() and Triple?
+  bool PIE = ToolChain.isPIEDefault();
+  bool PIC = PIE || ToolChain.isPICDefault();
+  bool IsPICLevelTwo = PIC;
+
+  bool KernelOrKext =
+      Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
+
+  // Android-specific defaults for PIC/PIE
+  if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android) {
+    switch (ToolChain.getArch()) {
+    case llvm::Triple::arm:
+    case llvm::Triple::armeb:
+    case llvm::Triple::thumb:
+    case llvm::Triple::thumbeb:
+    case llvm::Triple::aarch64:
+    case llvm::Triple::mips:
+    case llvm::Triple::mipsel:
+    case llvm::Triple::mips64:
+    case llvm::Triple::mips64el:
+      PIC = true; // "-fpic"
+      break;
+
+    case llvm::Triple::x86:
+    case llvm::Triple::x86_64:
+      PIC = true; // "-fPIC"
+      IsPICLevelTwo = true;
+      break;
+
+    default:
+      break;
+    }
+  }
+
+  // OpenBSD-specific defaults for PIE
+  if (ToolChain.getTriple().getOS() == llvm::Triple::OpenBSD) {
+    switch (ToolChain.getArch()) {
+    case llvm::Triple::mips64:
+    case llvm::Triple::mips64el:
+    case llvm::Triple::sparcel:
+    case llvm::Triple::x86:
+    case llvm::Triple::x86_64:
+      IsPICLevelTwo = false; // "-fpie"
+      break;
+
+    case llvm::Triple::ppc:
+    case llvm::Triple::sparc:
+    case llvm::Triple::sparcv9:
+      IsPICLevelTwo = true; // "-fPIE"
+      break;
+
+    default:
+      break;
+    }
+  }
+
+  // The last argument relating to either PIC or PIE wins, and no
+  // other argument is used. If the last argument is any flavor of the
+  // '-fno-...' arguments, both PIC and PIE are disabled. Any PIE
+  // option implicitly enables PIC at the same level.
+  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                    options::OPT_fpic, options::OPT_fno_pic,
+                                    options::OPT_fPIE, options::OPT_fno_PIE,
+                                    options::OPT_fpie, options::OPT_fno_pie);
+  // Check whether the tool chain trumps the PIC-ness decision. If the PIC-ness
+  // is forced, then neither PIC nor PIE flags will have no effect.
+  if (!ToolChain.isPICDefaultForced()) {
+    if (LastPICArg) {
+      Option O = LastPICArg->getOption();
+      if (O.matches(options::OPT_fPIC) || O.matches(options::OPT_fpic) ||
+          O.matches(options::OPT_fPIE) || O.matches(options::OPT_fpie)) {
+        PIE = O.matches(options::OPT_fPIE) || O.matches(options::OPT_fpie);
+        PIC =
+            PIE || O.matches(options::OPT_fPIC) || O.matches(options::OPT_fpic);
+        IsPICLevelTwo =
+            O.matches(options::OPT_fPIE) || O.matches(options::OPT_fPIC);
+      } else {
+        PIE = PIC = false;
+      }
+    }
+  }
+
+  // Introduce a Darwin-specific hack. If the default is PIC, but the
+  // PIC level would've been set to level 1, force it back to level 2
+  // PIC instead. This matches the behavior of Darwin GCC (based on
+  // chandlerc's informal testing in 2012).
+  if (PIC && ToolChain.getTriple().isOSDarwin())
+    IsPICLevelTwo |= ToolChain.isPICDefault();
+
+  // This kernel flags are a trump-card: they will disable PIC/PIE
+  // generation, independent of the argument order.
+  if (KernelOrKext && (!Triple.isiOS() || Triple.isOSVersionLT(6)))
+    PIC = PIE = false;
+
+  if (Arg *A = Args.getLastArg(options::OPT_mdynamic_no_pic)) {
+    // This is a very special mode. It trumps the other modes, almost no one
+    // uses it, and it isn't even valid on any OS but Darwin.
+    if (!ToolChain.getTriple().isOSDarwin())
+      ToolChain.getDriver().Diag(diag::err_drv_unsupported_opt_for_target)
+          << A->getSpelling() << ToolChain.getTriple().str();
+
+    // FIXME: Warn when this flag trumps some other PIC or PIE flag.
+
+    // Only a forced PIC mode can cause the actual compile to have PIC defines
+    // etc., no flags are sufficient. This behavior was selected to closely
+    // match that of llvm-gcc and Apple GCC before that.
+    PIC = ToolChain.isPICDefault() && ToolChain.isPICDefaultForced();
+
+    return std::make_tuple(llvm::Reloc::DynamicNoPIC, PIC ? 2 : 0, false);
+  }
+
+  if (PIC)
+    return std::make_tuple(llvm::Reloc::PIC_, IsPICLevelTwo ? 2 : 1, PIE);
+
+  return std::make_tuple(llvm::Reloc::Static, 0, false);
+}
+
+static const char *RelocationModelName(llvm::Reloc::Model Model) {
+  switch (Model) {
+  case llvm::Reloc::Default:
+    return nullptr;
+  case llvm::Reloc::Static:
+    return "static";
+  case llvm::Reloc::PIC_:
+    return "pic";
+  case llvm::Reloc::DynamicNoPIC:
+    return "dynamic-no-pic";
+  }
+  llvm_unreachable("Unknown Reloc::Model kind");
+}
+
+static void AddAssemblerKPIC(const ToolChain &ToolChain, const ArgList &Args,
+                             ArgStringList &CmdArgs) {
+  llvm::Reloc::Model RelocationModel;
+  unsigned PICLevel;
+  bool IsPIE;
+  std::tie(RelocationModel, PICLevel, IsPIE) =
+      ParsePICArgs(ToolChain, ToolChain.getTriple(), Args);
+
+  if (RelocationModel != llvm::Reloc::Static)
+    CmdArgs.push_back("-KPIC");
+}
+
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
+  std::string TripleStr = getToolChain().ComputeEffectiveClangTriple(Args);
+  const llvm::Triple Triple(TripleStr);
+
   bool KernelOrKext =
       Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
   const Driver &D = getToolChain().getDriver();
@@ -3209,17 +3366,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Add the "effective" target triple.
   CmdArgs.push_back("-triple");
-  std::string TripleStr = getToolChain().ComputeEffectiveClangTriple(Args);
   CmdArgs.push_back(Args.MakeArgString(TripleStr));
 
-  const llvm::Triple TT(TripleStr);
-  if (TT.isOSWindows() && (TT.getArch() == llvm::Triple::arm ||
-                           TT.getArch() == llvm::Triple::thumb)) {
-    unsigned Offset = TT.getArch() == llvm::Triple::arm ? 4 : 6;
+  if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
+                               Triple.getArch() == llvm::Triple::thumb)) {
+    unsigned Offset = Triple.getArch() == llvm::Triple::arm ? 4 : 6;
     unsigned Version;
-    TT.getArchName().substr(Offset).getAsInteger(10, Version);
+    Triple.getArchName().substr(Offset).getAsInteger(10, Version);
     if (Version < 7)
-      D.Diag(diag::err_target_unsupported_arch) << TT.getArchName()
+      D.Diag(diag::err_target_unsupported_arch) << Triple.getArchName()
                                                 << TripleStr;
   }
 
@@ -3377,135 +3532,23 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   CheckCodeGenerationOptions(D, Args);
 
-  bool PIE = getToolChain().isPIEDefault();
-  bool PIC = PIE || getToolChain().isPICDefault();
-  bool IsPICLevelTwo = PIC;
+  llvm::Reloc::Model RelocationModel;
+  unsigned PICLevel;
+  bool IsPIE;
+  std::tie(RelocationModel, PICLevel, IsPIE) =
+      ParsePICArgs(getToolChain(), Triple, Args);
 
-  // Android-specific defaults for PIC/PIE
-  if (getToolChain().getTriple().getEnvironment() == llvm::Triple::Android) {
-    switch (getToolChain().getArch()) {
-    case llvm::Triple::arm:
-    case llvm::Triple::armeb:
-    case llvm::Triple::thumb:
-    case llvm::Triple::thumbeb:
-    case llvm::Triple::aarch64:
-    case llvm::Triple::mips:
-    case llvm::Triple::mipsel:
-    case llvm::Triple::mips64:
-    case llvm::Triple::mips64el:
-      PIC = true; // "-fpic"
-      break;
-
-    case llvm::Triple::x86:
-    case llvm::Triple::x86_64:
-      PIC = true; // "-fPIC"
-      IsPICLevelTwo = true;
-      break;
-
-    default:
-      break;
-    }
-  }
-
-  // OpenBSD-specific defaults for PIE
-  if (getToolChain().getTriple().getOS() == llvm::Triple::OpenBSD) {
-    switch (getToolChain().getArch()) {
-    case llvm::Triple::mips64:
-    case llvm::Triple::mips64el:
-    case llvm::Triple::sparcel:
-    case llvm::Triple::x86:
-    case llvm::Triple::x86_64:
-      IsPICLevelTwo = false; // "-fpie"
-      break;
-
-    case llvm::Triple::ppc:
-    case llvm::Triple::sparc:
-    case llvm::Triple::sparcv9:
-      IsPICLevelTwo = true; // "-fPIE"
-      break;
-
-    default:
-      break;
-    }
-  }
-
-  // For the PIC and PIE flag options, this logic is different from the
-  // legacy logic in very old versions of GCC, as that logic was just
-  // a bug no one had ever fixed. This logic is both more rational and
-  // consistent with GCC's new logic now that the bugs are fixed. The last
-  // argument relating to either PIC or PIE wins, and no other argument is
-  // used. If the last argument is any flavor of the '-fno-...' arguments,
-  // both PIC and PIE are disabled. Any PIE option implicitly enables PIC
-  // at the same level.
-  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
-                                    options::OPT_fpic, options::OPT_fno_pic,
-                                    options::OPT_fPIE, options::OPT_fno_PIE,
-                                    options::OPT_fpie, options::OPT_fno_pie);
-  // Check whether the tool chain trumps the PIC-ness decision. If the PIC-ness
-  // is forced, then neither PIC nor PIE flags will have no effect.
-  if (!getToolChain().isPICDefaultForced()) {
-    if (LastPICArg) {
-      Option O = LastPICArg->getOption();
-      if (O.matches(options::OPT_fPIC) || O.matches(options::OPT_fpic) ||
-          O.matches(options::OPT_fPIE) || O.matches(options::OPT_fpie)) {
-        PIE = O.matches(options::OPT_fPIE) || O.matches(options::OPT_fpie);
-        PIC =
-            PIE || O.matches(options::OPT_fPIC) || O.matches(options::OPT_fpic);
-        IsPICLevelTwo =
-            O.matches(options::OPT_fPIE) || O.matches(options::OPT_fPIC);
-      } else {
-        PIE = PIC = false;
-      }
-    }
-  }
-
-  // Introduce a Darwin-specific hack. If the default is PIC but the flags
-  // specified while enabling PIC enabled level 1 PIC, just force it back to
-  // level 2 PIC instead. This matches the behavior of Darwin GCC (based on my
-  // informal testing).
-  if (PIC && getToolChain().getTriple().isOSDarwin())
-    IsPICLevelTwo |= getToolChain().isPICDefault();
-
-  // Note that these flags are trump-cards. Regardless of the order w.r.t. the
-  // PIC or PIE options above, if these show up, PIC is disabled.
-  llvm::Triple Triple(TripleStr);
-  if (KernelOrKext && (!Triple.isiOS() || Triple.isOSVersionLT(6)))
-    PIC = PIE = false;
-  if (Args.hasArg(options::OPT_static))
-    PIC = PIE = false;
-
-  if (Arg *A = Args.getLastArg(options::OPT_mdynamic_no_pic)) {
-    // This is a very special mode. It trumps the other modes, almost no one
-    // uses it, and it isn't even valid on any OS but Darwin.
-    if (!getToolChain().getTriple().isOSDarwin())
-      D.Diag(diag::err_drv_unsupported_opt_for_target)
-          << A->getSpelling() << getToolChain().getTriple().str();
-
-    // FIXME: Warn when this flag trumps some other PIC or PIE flag.
-
+  const char *RMName = RelocationModelName(RelocationModel);
+  if (RMName) {
     CmdArgs.push_back("-mrelocation-model");
-    CmdArgs.push_back("dynamic-no-pic");
-
-    // Only a forced PIC mode can cause the actual compile to have PIC defines
-    // etc., no flags are sufficient. This behavior was selected to closely
-    // match that of llvm-gcc and Apple GCC before that.
-    if (getToolChain().isPICDefault() && getToolChain().isPICDefaultForced()) {
-      CmdArgs.push_back("-pic-level");
-      CmdArgs.push_back("2");
-    }
-  } else {
-    // Currently, LLVM only knows about PIC vs. static; the PIE differences are
-    // handled in Clang's IRGen by the -pie-level flag.
-    CmdArgs.push_back("-mrelocation-model");
-    CmdArgs.push_back(PIC ? "pic" : "static");
-
-    if (PIC) {
-      CmdArgs.push_back("-pic-level");
-      CmdArgs.push_back(IsPICLevelTwo ? "2" : "1");
-      if (PIE) {
-        CmdArgs.push_back("-pie-level");
-        CmdArgs.push_back(IsPICLevelTwo ? "2" : "1");
-      }
+    CmdArgs.push_back(RMName);
+  }
+  if (PICLevel > 0) {
+    CmdArgs.push_back("-pic-level");
+    CmdArgs.push_back(PICLevel == 1 ? "1" : "2");
+    if (IsPIE) {
+      CmdArgs.push_back("-pie-level");
+      CmdArgs.push_back(PICLevel == 1 ? "1" : "2");
     }
   }
 
@@ -3945,6 +3988,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-dwarf-column-info");
 
   // FIXME: Move backend command line options to the module.
+  if (Args.hasArg(options::OPT_gmodules)) {
+    CmdArgs.push_back("-g");
+    CmdArgs.push_back("-dwarf-ext-refs");
+    CmdArgs.push_back("-fmodule-format=obj");
+  }
+
   // -gsplit-dwarf should turn on -g and enable the backend dwarf
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
@@ -4545,9 +4594,19 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-mstack-probe-size=0");
   }
 
-  if (getToolChain().getArch() == llvm::Triple::aarch64 ||
-      getToolChain().getArch() == llvm::Triple::aarch64_be)
+  switch (getToolChain().getArch()) {
+  case llvm::Triple::aarch64:
+  case llvm::Triple::aarch64_be:
+  case llvm::Triple::arm:
+  case llvm::Triple::armeb:
+  case llvm::Triple::thumb:
+  case llvm::Triple::thumbeb:
     CmdArgs.push_back("-fallow-half-arguments-and-returns");
+    break;
+
+  default:
+    break;
+  }
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
                                options::OPT_mno_restrict_it)) {
@@ -4558,8 +4617,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-backend-option");
       CmdArgs.push_back("-arm-no-restrict-it");
     }
-  } else if (TT.isOSWindows() && (TT.getArch() == llvm::Triple::arm ||
-                                  TT.getArch() == llvm::Triple::thumb)) {
+  } else if (Triple.isOSWindows() &&
+             (Triple.getArch() == llvm::Triple::arm ||
+              Triple.getArch() == llvm::Triple::thumb)) {
     // Windows on ARM expects restricted IT blocks
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-arm-restrict-it");
@@ -5675,6 +5735,10 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   assert(Inputs.size() == 1 && "Unexpected number of inputs.");
   const InputInfo &Input = Inputs[0];
 
+  std::string TripleStr =
+      getToolChain().ComputeEffectiveClangTriple(Args, Input.getType());
+  const llvm::Triple Triple(TripleStr);
+
   // Don't warn about "clang -w -c foo.s"
   Args.ClaimAllArgs(options::OPT_w);
   // and "clang -emit-llvm -c foo.s"
@@ -5689,8 +5753,6 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Add the "effective" target triple.
   CmdArgs.push_back("-triple");
-  std::string TripleStr =
-      getToolChain().ComputeEffectiveClangTriple(Args, Input.getType());
   CmdArgs.push_back(Args.MakeArgString(TripleStr));
 
   // Set the output mode, we currently only expect to be used as a real
@@ -5704,7 +5766,6 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(Clang::getBaseInputName(Args, Input));
 
   // Add the target cpu
-  const llvm::Triple Triple(TripleStr);
   std::string CPU = getCPUName(Args, Triple, JA.getOffloadingDevice(),
                                /*FromAs*/ true);
   if (!CPU.empty()) {
@@ -5755,6 +5816,20 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
 
     // And pass along -I options
     Args.AddAllArgs(CmdArgs, options::OPT_I);
+  }
+
+  // Handle -fPIC et al -- the relocation-model affects the assembler
+  // for some targets.
+  llvm::Reloc::Model RelocationModel;
+  unsigned PICLevel;
+  bool IsPIE;
+  std::tie(RelocationModel, PICLevel, IsPIE) =
+      ParsePICArgs(getToolChain(), Triple, Args);
+
+  const char *RMName = RelocationModelName(RelocationModel);
+  if (RMName) {
+    CmdArgs.push_back("-mrelocation-model");
+    CmdArgs.push_back(RMName);
   }
 
   // Optionally embed the -cc1as level arguments into the debug info, for build
@@ -5870,12 +5945,22 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   //
   // FIXME: The triple class should directly provide the information we want
   // here.
-  const llvm::Triple::ArchType Arch = getToolChain().getArch();
-  if (Arch == llvm::Triple::x86 || Arch == llvm::Triple::ppc)
+  switch (getToolChain().getArch()) {
+  default:
+    break;
+  case llvm::Triple::x86:
+  case llvm::Triple::ppc:
     CmdArgs.push_back("-m32");
-  else if (Arch == llvm::Triple::x86_64 || Arch == llvm::Triple::ppc64 ||
-           Arch == llvm::Triple::ppc64le)
+    break;
+  case llvm::Triple::x86_64:
+  case llvm::Triple::ppc64:
+  case llvm::Triple::ppc64le:
     CmdArgs.push_back("-m64");
+    break;
+  case llvm::Triple::sparcel:
+    CmdArgs.push_back("-EL");
+    break;
+  }
 
   if (Output.isFilename()) {
     CmdArgs.push_back("-o");
@@ -6287,33 +6372,30 @@ const std::string arm::getARMArch(StringRef Arch, const llvm::Triple &Triple) {
     std::string CPU = llvm::sys::getHostCPUName();
     if (CPU != "generic") {
       // Translate the native cpu into the architecture suffix for that CPU.
-      const char *Suffix = arm::getLLVMArchSuffixForARM(CPU, MArch);
+      StringRef Suffix = arm::getLLVMArchSuffixForARM(CPU, MArch);
       // If there is no valid architecture suffix for this CPU we don't know how
       // to handle it, so return no architecture.
-      if (strcmp(Suffix, "") == 0)
+      if (Suffix.empty())
         MArch = "";
       else
-        MArch = std::string("arm") + Suffix;
+        MArch = std::string("arm") + Suffix.str();
     }
   }
 
   return MArch;
 }
+
 /// Get the (LLVM) name of the minimum ARM CPU for the arch we are targeting.
-const char *arm::getARMCPUForMArch(StringRef Arch, const llvm::Triple &Triple) {
+StringRef arm::getARMCPUForMArch(StringRef Arch, const llvm::Triple &Triple) {
   std::string MArch = getARMArch(Arch, Triple);
   // getARMCPUForArch defaults to the triple if MArch is empty, but empty MArch
   // here means an -march=native that we can't handle, so instead return no CPU.
   if (MArch.empty())
-    return "";
+    return StringRef();
 
   // We need to return an empty string here on invalid MArch values as the
   // various places that call this function can't cope with a null result.
-  const char *result = Triple.getARMCPUForArch(MArch);
-  if (result)
-    return result;
-  else
-    return "";
+  return Triple.getARMCPUForArch(MArch);
 }
 
 /// getARMTargetCPU - Get the (LLVM) name of the ARM cpu we are targeting.
@@ -6336,15 +6418,15 @@ std::string arm::getARMTargetCPU(StringRef CPU, StringRef Arch,
 /// getLLVMArchSuffixForARM - Get the LLVM arch name to use for a particular
 /// CPU  (or Arch, if CPU is generic).
 // FIXME: This is redundant with -mcpu, why does LLVM use this.
-const char *arm::getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch) {
-  if (CPU == "generic" &&
-      llvm::ARMTargetParser::parseArch(Arch) == llvm::ARM::AK_ARMV8_1A)
-    return "v8.1a";
+StringRef arm::getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch) {
+  if (CPU == "generic")
+    return llvm::ARM::getSubArch(
+        llvm::ARM::parseArch(Arch));
 
-  unsigned ArchKind = llvm::ARMTargetParser::parseCPUArch(CPU);
+  unsigned ArchKind = llvm::ARM::parseCPUArch(CPU);
   if (ArchKind == llvm::ARM::AK_INVALID)
     return "";
-  return llvm::ARMTargetParser::getSubArch(ArchKind);
+  return llvm::ARM::getSubArch(ArchKind);
 }
 
 void arm::appendEBLinkFlags(const ArgList &Args, ArgStringList &CmdArgs,
@@ -7116,25 +7198,6 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                    const InputInfoList &Inputs,
                                    const ArgList &Args,
                                    const char *LinkingOutput) const {
-  // FIXME: Find a real GCC, don't hard-code versions here
-  std::string GCCLibPath = "/usr/gcc/4.5/lib/gcc/";
-  const llvm::Triple &T = getToolChain().getTriple();
-  std::string LibPath = "/usr/lib/";
-  const llvm::Triple::ArchType Arch = T.getArch();
-  switch (Arch) {
-  case llvm::Triple::x86:
-    GCCLibPath +=
-        ("i386-" + T.getVendorName() + "-" + T.getOSName()).str() + "/4.5.2/";
-    break;
-  case llvm::Triple::x86_64:
-    GCCLibPath += ("i386-" + T.getVendorName() + "-" + T.getOSName()).str();
-    GCCLibPath += "/4.5.2/amd64/";
-    LibPath += "amd64/";
-    break;
-  default:
-    llvm_unreachable("Unsupported architecture");
-  }
-
   ArgStringList CmdArgs;
 
   // Demangle C++ names in errors
@@ -7155,7 +7218,8 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-shared");
     } else {
       CmdArgs.push_back("--dynamic-linker");
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "ld.so.1"));
+      CmdArgs.push_back(
+          Args.MakeArgString(getToolChain().GetFilePath("ld.so.1")));
     }
   }
 
@@ -7168,21 +7232,24 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
-    if (!Args.hasArg(options::OPT_shared)) {
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "crt1.o"));
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "crti.o"));
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "values-Xa.o"));
-      CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtbegin.o"));
-    } else {
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "crti.o"));
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "values-Xa.o"));
-      CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtbegin.o"));
-    }
+    if (!Args.hasArg(options::OPT_shared))
+      CmdArgs.push_back(
+          Args.MakeArgString(getToolChain().GetFilePath("crt1.o")));
+
+    CmdArgs.push_back(Args.MakeArgString(getToolChain().GetFilePath("crti.o")));
+    CmdArgs.push_back(
+        Args.MakeArgString(getToolChain().GetFilePath("values-Xa.o")));
+    CmdArgs.push_back(
+        Args.MakeArgString(getToolChain().GetFilePath("crtbegin.o")));
+
     if (getToolChain().getDriver().CCCIsCXX())
-      CmdArgs.push_back(Args.MakeArgString(LibPath + "cxa_finalize.o"));
+      CmdArgs.push_back(
+          Args.MakeArgString(getToolChain().GetFilePath("cxa_finalize.o")));
   }
 
-  CmdArgs.push_back(Args.MakeArgString("-L" + GCCLibPath));
+  const ToolChain::path_list &Paths = getToolChain().getFilePaths();
+  for (const auto &Path : Paths)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
 
   Args.AddAllArgs(CmdArgs, {options::OPT_L, options::OPT_T_Group,
                             options::OPT_e, options::OPT_r});
@@ -7204,9 +7271,10 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
-    CmdArgs.push_back(Args.MakeArgString(GCCLibPath + "crtend.o"));
+    CmdArgs.push_back(
+        Args.MakeArgString(getToolChain().GetFilePath("crtend.o")));
   }
-  CmdArgs.push_back(Args.MakeArgString(LibPath + "crtn.o"));
+  CmdArgs.push_back(Args.MakeArgString(getToolChain().GetFilePath("crtn.o")));
 
   addProfileRT(getToolChain(), Args, CmdArgs);
 
@@ -7273,7 +7341,7 @@ void openbsd::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (NeedsKPIC)
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
 
   // When building 32-bit code on OpenBSD/amd64, we have to explicitly
   // instruct as in the base system to assemble 32-bit code.
@@ -7623,7 +7691,7 @@ void freebsd::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-EL");
 
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
   } else if (getToolChain().getArch() == llvm::Triple::arm ||
              getToolChain().getArch() == llvm::Triple::armeb ||
              getToolChain().getArch() == llvm::Triple::thumb ||
@@ -7656,7 +7724,7 @@ void freebsd::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-Av9a");
 
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
@@ -7904,20 +7972,20 @@ void netbsd::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-EL");
 
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
     break;
   }
 
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
     CmdArgs.push_back("-32");
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
     break;
 
   case llvm::Triple::sparcv9:
     CmdArgs.push_back("-64");
     CmdArgs.push_back("-Av9");
-    addAssemblerKPIC(Args, CmdArgs);
+    AddAssemblerKPIC(getToolChain(), Args, CmdArgs);
     break;
 
   default:
@@ -8156,8 +8224,17 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                        const char *LinkingOutput) const {
   claimNoWarnArgs(Args);
 
+  std::string TripleStr = getToolChain().ComputeEffectiveClangTriple(Args);
+  llvm::Triple Triple = llvm::Triple(TripleStr);
+
   ArgStringList CmdArgs;
   bool NeedsKPIC = false;
+
+  llvm::Reloc::Model RelocationModel;
+  unsigned PICLevel;
+  bool IsPIE;
+  std::tie(RelocationModel, PICLevel, IsPIE) =
+      ParsePICArgs(getToolChain(), Triple, Args);
 
   switch (getToolChain().getArch()) {
   default:
@@ -8204,8 +8281,8 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::armeb:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb: {
-    const llvm::Triple &Triple = getToolChain().getTriple();
-    switch (Triple.getSubArch()) {
+    const llvm::Triple &Triple2 = getToolChain().getTriple();
+    switch (Triple2.getSubArch()) {
     case llvm::Triple::ARMSubArch_v7:
       CmdArgs.push_back("-mfpu=neon");
       break;
@@ -8216,9 +8293,8 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
       break;
     }
 
-    StringRef ARMFloatABI = tools::arm::getARMFloatABI(
-        getToolChain().getDriver(), Args,
-        llvm::Triple(getToolChain().ComputeEffectiveClangTriple(Args)));
+    StringRef ARMFloatABI =
+        tools::arm::getARMFloatABI(getToolChain().getDriver(), Args, Triple);
     CmdArgs.push_back(Args.MakeArgString("-mfloat-abi=" + ARMFloatABI));
 
     Args.AddLastArg(CmdArgs, options::OPT_march_EQ);
@@ -8252,18 +8328,7 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
     // -mno-shared should be emitted unless -fpic, -fpie, -fPIC, -fPIE,
     // or -mshared (not implemented) is in effect.
-    bool IsPicOrPie = false;
-    if (Arg *A = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
-                                 options::OPT_fpic, options::OPT_fno_pic,
-                                 options::OPT_fPIE, options::OPT_fno_PIE,
-                                 options::OPT_fpie, options::OPT_fno_pie)) {
-      if (A->getOption().matches(options::OPT_fPIC) ||
-          A->getOption().matches(options::OPT_fpic) ||
-          A->getOption().matches(options::OPT_fPIE) ||
-          A->getOption().matches(options::OPT_fpie))
-        IsPicOrPie = true;
-    }
-    if (!IsPicOrPie)
+    if (RelocationModel == llvm::Reloc::Static)
       CmdArgs.push_back("-mno-shared");
 
     // LLVM doesn't support -mplt yet and acts as if it is always given.
@@ -8337,8 +8402,10 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   }
   }
 
-  if (NeedsKPIC)
-    addAssemblerKPIC(Args, CmdArgs);
+  if (NeedsKPIC) {
+    if (RelocationModel != llvm::Reloc::Static)
+      CmdArgs.push_back("-KPIC");
+  }
 
   Args.AddAllArgs(CmdArgs, options::OPT_I);
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
@@ -8454,7 +8521,7 @@ static StringRef getLinuxDynamicLinker(const ArgList &Args,
       return "/lib64/ld64.so.1";
     return "/lib64/ld64.so.2";
   } else if (Arch == llvm::Triple::systemz)
-    return "/lib64/ld64.so.1";
+    return "/lib/ld64.so.1";
   else if (Arch == llvm::Triple::sparcv9)
     return "/lib64/ld-linux.so.2";
   else if (Arch == llvm::Triple::x86_64 &&
@@ -8542,6 +8609,10 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const toolchains::Linux &ToolChain =
       static_cast<const toolchains::Linux &>(getToolChain());
   const Driver &D = ToolChain.getDriver();
+
+  std::string TripleStr = getToolChain().ComputeEffectiveClangTriple(Args);
+  llvm::Triple Triple = llvm::Triple(TripleStr);
+
   const llvm::Triple::ArchType Arch = ToolChain.getArch();
   const bool isAndroid =
       ToolChain.getTriple().getEnvironment() == llvm::Triple::Android;
@@ -8572,9 +8643,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-s");
 
   if (Arch == llvm::Triple::armeb || Arch == llvm::Triple::thumbeb)
-    arm::appendEBLinkFlags(
-        Args, CmdArgs,
-        llvm::Triple(getToolChain().ComputeEffectiveClangTriple(Args)));
+    arm::appendEBLinkFlags(Args, CmdArgs, Triple);
 
   for (const auto &Opt : ToolChain.ExtraOpts)
     CmdArgs.push_back(Opt.c_str());
@@ -9321,6 +9390,27 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT__SLASH_link);
+
+  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                   options::OPT_fno_openmp, false)) {
+    CmdArgs.push_back("-nodefaultlib:vcomp.lib");
+    CmdArgs.push_back("-nodefaultlib:vcompd.lib");
+    CmdArgs.push_back(Args.MakeArgString(std::string("-libpath:") +
+                                         TC.getDriver().Dir + "/../lib"));
+    switch (getOpenMPRuntime(getToolChain(), Args)) {
+    case OMPRT_OMP:
+      CmdArgs.push_back("-defaultlib:libomp.lib");
+      break;
+    case OMPRT_IOMP5:
+      CmdArgs.push_back("-defaultlib:libiomp5md.lib");
+      break;
+    case OMPRT_GOMP:
+      break;
+    case OMPRT_Unknown:
+      // Already diagnosed.
+      break;
+    }
+  }
 
   // Add filenames, libraries, and other linker inputs.
   for (const auto &Input : Inputs) {
@@ -10280,6 +10370,7 @@ void tools::SHAVE::Compiler::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_f_Group,
                    options::OPT_f_clang_Group,
                    options::OPT_g_Group,
+                   options::OPT_M_Group,
                    options::OPT_O_Group,
                    options::OPT_W_Group});
   CmdArgs.push_back("-fno-exceptions"); // Always do this even if unspecified.

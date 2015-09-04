@@ -64,6 +64,7 @@ public:
     // ThreadModel, but the backend expects them to be nonempty.
     CodeGenOpts.CodeModel = "default";
     CodeGenOpts.ThreadModel = "single";
+    CodeGenOpts.DebugTypeExtRefs = true;
     CodeGenOpts.setDebugInfo(CodeGenOptions::FullDebugInfo);
     CodeGenOpts.SplitDwarfFile = OutputFileName;
   }
@@ -71,10 +72,7 @@ public:
   virtual ~PCHContainerGenerator() {}
 
   void Initialize(ASTContext &Context) override {
-    if (Ctx) {
-      assert(Ctx == &Context);
-      return;
-    }
+    assert(!Ctx && "initialized multiple times");
 
     Ctx = &Context;
     VMContext.reset(new llvm::LLVMContext());

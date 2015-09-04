@@ -307,17 +307,15 @@ public:
   void emitCXXStructor(const CXXMethodDecl *MD, StructorType Type) override;
 
  private:
-  /// Checks if function has any virtual inline function.
-  bool hasAnyVirtualInlineFunction(const CXXRecordDecl *RD) const {
+   bool hasAnyUsedVirtualInlineFunction(const CXXRecordDecl *RD) const {
     const auto &VtableLayout =
         CGM.getItaniumVTableContext().getVTableLayout(RD);
 
     for (const auto &VtableComponent : VtableLayout.vtable_components()) {
-      if (VtableComponent.getKind() !=
-          VTableComponent::Kind::CK_FunctionPointer)
+      if (!VtableComponent.isUsedFunctionPointerKind())
         continue;
 
-      const auto &Method = VtableComponent.getFunctionDecl();
+      const CXXMethodDecl *Method = VtableComponent.getFunctionDecl();
       if (Method->getCanonicalDecl()->isInlined())
         return true;
     }
@@ -1511,7 +1509,7 @@ bool ItaniumCXXABI::canEmitAvailableExternallyVTable(
   // then we are safe to emit available_externally copy of vtable.
   // FIXME we can still emit a copy of the vtable if we
   // can emit definition of the inline functions.
-  return !hasAnyVirtualInlineFunction(RD);
+  return !hasAnyUsedVirtualInlineFunction(RD);
 }
 static llvm::Value *performTypeAdjustment(CodeGenFunction &CGF,
                                           llvm::Value *Ptr,
@@ -1767,7 +1765,7 @@ static llvm::Constant *getGuardAbortFn(CodeGenModule &CGM,
 }
 
 namespace {
-  struct CallGuardAbort : EHScopeStack::Cleanup {
+  struct CallGuardAbort final : EHScopeStack::Cleanup {
     llvm::GlobalVariable *Guard;
     CallGuardAbort(llvm::GlobalVariable *Guard) : Guard(Guard) {}
 
@@ -1826,10 +1824,12 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());
 
-    // The ABI says: It is suggested that it be emitted in the same COMDAT group
-    // as the associated data object
+    // The ABI says: "It is suggested that it be emitted in the same COMDAT
+    // group as the associated data object." In practice, this doesn't work for
+    // non-ELF object formats, so only do it for ELF.
     llvm::Comdat *C = var->getComdat();
-    if (!D.isLocalVarDecl() && C) {
+    if (!D.isLocalVarDecl() && C &&
+        CGM.getTarget().getTriple().isOSBinFormatELF()) {
       guard->setComdat(C);
       CGF.CurFn->setComdat(C);
     } else if (CGM.supportsCOMDAT() && guard->isWeakForLinker()) {
@@ -3412,7 +3412,7 @@ void ItaniumCXXABI::emitCXXStructor(const CXXMethodDecl *MD,
 
     if (CGType == StructorCodegen::RAUW) {
       StringRef MangledName = CGM.getMangledName(CompleteDecl);
-      auto *Aliasee = cast<llvm::GlobalValue>(CGM.GetAddrOfGlobal(BaseDecl));
+      auto *Aliasee = CGM.GetAddrOfGlobal(BaseDecl);
       CGM.addReplacement(MangledName, Aliasee);
       return;
     }
@@ -3479,7 +3479,7 @@ namespace {
   ///     of the caught type, so we have to assume the actual thrown
   ///     exception type might have a throwing destructor, even if the
   ///     caught type's destructor is trivial or nothrow.
-  struct CallEndCatch : EHScopeStack::Cleanup {
+  struct CallEndCatch final : EHScopeStack::Cleanup {
     CallEndCatch(bool MightThrow) : MightThrow(MightThrow) {}
     bool MightThrow;
 

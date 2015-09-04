@@ -21,11 +21,18 @@
 // RUN: rm %t/other.modulemap
 // RUN: %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s
 // RUN: not %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s -DERRORS 2>&1 | FileCheck %s
+// RUN: sleep 1
+// RUN: touch %t/a.h
+// RUN: %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s
+// RUN: not %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s -DERRORS 2>&1 | FileCheck %s
 // RUN: rm %t/b.h
 // RUN: %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s
 // RUN: not %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s -DERRORS 2>&1 | FileCheck %s --check-prefix=MISSING-B
 // RUN: rm %t/a.h
 // RUN: %clang_cc1 -fmodules -I %t -fmodule-file=%t/a.pcm %s -verify
+
+// Oftentimes on Windows there are open handles, and deletion will fail.
+// REQUIRES: can-remove-opened-file
 
 #include "a.h" // expected-error {{file not found}}
 int x = b;

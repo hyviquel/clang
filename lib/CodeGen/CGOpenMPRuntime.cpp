@@ -3470,12 +3470,14 @@ class CGOpenMPRuntime_NVPTX: public CGOpenMPRuntime {
 
      CGBuilderTy &Builder = CGF.Builder;
 
-     llvm::Value *SimdLaneNumSext =
-         Builder.CreateSExt(SimdLaneNum, LoopCount->getType()->getPointerTo());
+     llvm::Value *SimdLaneNumVal = Builder.CreateLoad(SimdLaneNum);
+     llvm::Value *SimdLaneNumValSext = Builder.CreateSExt(SimdLaneNumVal,
+                                   LoopCount->getType());
 
      llvm::Value *InitialValue =
          Builder.CreateAdd(llvm::ConstantInt::get(LoopCount->getType(), 0),
-                           Builder.CreateLoad(SimdLaneNumSext));
+             SimdLaneNumValSext);
+
      Builder.CreateStore(InitialValue, LoopIndex);
    }
 
@@ -3490,8 +3492,12 @@ class CGOpenMPRuntime_NVPTX: public CGOpenMPRuntime {
 
      CGBuilderTy &Builder = CGF.Builder;
 
+     llvm::Value *SimdNumLanesVal = Builder.CreateLoad(SimdNumLanes);
+     llvm::Value *SimdNumLanesSext = Builder.CreateSExt(SimdNumLanesVal,
+         LoopIndex->getType()->getArrayElementType());
+
      llvm::Value *NewLoopIndexValue = Builder.CreateAdd(
-         Builder.CreateLoad(LoopIndex), Builder.CreateLoad(SimdNumLanes));
+         Builder.CreateLoad(LoopIndex), SimdNumLanesSext);
 
      Builder.CreateStore(NewLoopIndexValue, LoopIndex);
    }

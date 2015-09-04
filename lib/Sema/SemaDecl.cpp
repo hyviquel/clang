@@ -1022,7 +1022,7 @@ Corrected:
   
   if (FirstDecl->isCXXClassMember())
     return BuildPossibleImplicitMemberExpr(SS, SourceLocation(), Result,
-                                           nullptr);
+                                           nullptr, S);
 
   bool ADL = UseArgumentDependentLookup(SS, Result, NextToken.is(tok::l_paren));
   return BuildDeclarationNameExpr(SS, Result, ADL);
@@ -1089,7 +1089,9 @@ Sema::SkippedDefinitionContext Sema::ActOnTagStartSkippedDefinition(Scope *S,
   auto Result = static_cast<SkippedDefinitionContext>(CurContext);
   CurContext = cast<TagDecl>(D)->getDefinition();
   assert(CurContext && "skipping definition of undefined tag");
-  S->setEntity(CurContext);
+  // Start lookups from the parent of the current context; we don't want to look
+  // into the pre-existing complete definition.
+  S->setEntity(CurContext->getLookupParent());
   return Result;
 }
 
@@ -2270,9 +2272,17 @@ static void checkNewAttributesAfterDef(Sema &S, Decl *New, const Decl *Old) {
     const Attr *NewAttribute = NewAttributes[I];
 
     if (isa<AliasAttr>(NewAttribute)) {
-      if (FunctionDecl *FD = dyn_cast<FunctionDecl>(New))
-        S.CheckForFunctionRedefinition(FD, cast<FunctionDecl>(Def));
-      else {
+      if (FunctionDecl *FD = dyn_cast<FunctionDecl>(New)) {
+        Sema::SkipBodyInfo SkipBody;
+        S.CheckForFunctionRedefinition(FD, cast<FunctionDecl>(Def), &SkipBody);
+
+        // If we're skipping this definition, drop the "alias" attribute.
+        if (SkipBody.ShouldSkip) {
+          NewAttributes.erase(NewAttributes.begin() + I);
+          --E;
+          continue;
+        }
+      } else {
         VarDecl *VD = cast<VarDecl>(New);
         unsigned Diag = cast<VarDecl>(Def)->isThisDeclarationADefinition() ==
                                 VarDecl::TentativeDefinition
@@ -3550,11 +3560,11 @@ void Sema::handleTagNumbering(const TagDecl *Tag, Scope *TagScope) {
 
 void Sema::setTagNameForLinkagePurposes(TagDecl *TagFromDeclSpec,
                                         TypedefNameDecl *NewTD) {
-  // Do nothing if the tag is not anonymous or already has an
-  // associated typedef (from an earlier typedef in this decl group).
-  if (TagFromDeclSpec->getIdentifier())
+  if (TagFromDeclSpec->isInvalidDecl())
     return;
-  if (TagFromDeclSpec->getTypedefNameForAnonDecl())
+
+  // Do nothing if the tag already has a name for linkage purposes.
+  if (TagFromDeclSpec->hasNameForLinkage())
     return;
 
   // A well-formed anonymous tag must always be a TUK_Definition.
@@ -3562,8 +3572,11 @@ void Sema::setTagNameForLinkagePurposes(TagDecl *TagFromDeclSpec,
 
   // The type must match the tag exactly;  no qualifiers allowed.
   if (!Context.hasSameType(NewTD->getUnderlyingType(),
-                           Context.getTagDeclType(TagFromDeclSpec)))
+                           Context.getTagDeclType(TagFromDeclSpec))) {
+    if (getLangOpts().CPlusPlus)
+      Context.addTypedefNameForUnnamedTagDecl(TagFromDeclSpec, NewTD);
     return;
+  }
 
   // If we've already computed linkage for the anonymous tag, then
   // adding a typedef name for the anonymous decl can change that
@@ -3659,6 +3672,14 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
     else
       Diag(DS.getConstexprSpecLoc(), diag::err_constexpr_no_declarators);
     // Don't emit warnings after this error.
+    return TagD;
+  }
+
+  if (DS.isConceptSpecified()) {
+    // C++ Concepts TS [dcl.spec.concept]p1: A concept definition refers to
+    // either a function concept and its definition or a variable concept and
+    // its initializer.
+    Diag(DS.getConceptSpecLoc(), diag::err_concept_wrong_decl_kind);
     return TagD;
   }
 
@@ -4867,7 +4888,7 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
     // template, declared in namespace scope
     if (!TemplateParamLists.size()) {
       Diag(D.getDeclSpec().getConceptSpecLoc(),
-           diag::err_concept_decl_non_template);
+           diag:: err_concept_wrong_decl_kind);
       return nullptr;
     }
 
@@ -5988,7 +6009,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         break;
       case SC_Register:
         // Local Named register
-        if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
+        if (!Context.getTargetInfo().isValidGCCRegisterName(Label) &&
+            DeclAttrsMatchCUDAMode(getLangOpts(), getCurFunctionDecl()))
           Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
         break;
       case SC_Static:
@@ -5999,7 +6021,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       }
     } else if (SC == SC_Register) {
       // Global Named register
-      if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
+      if (!Context.getTargetInfo().isValidGCCRegisterName(Label) &&
+          DeclAttrsMatchCUDAMode(getLangOpts(), NewVD))
         Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
       if (!R->isIntegralType(Context) && !R->isPointerType()) {
         Diag(D.getLocStart(), diag::err_asm_bad_register_type);
@@ -6117,6 +6140,22 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                      NewVD, getMSManglingNumber(getLangOpts(), S)));
       Context.setStaticLocalNumber(NewVD, MCtx->getStaticLocalNumber(NewVD));
     }
+  }
+
+  // Special handling of variable named 'main'.
+  if (Name.isIdentifier() && Name.getAsIdentifierInfo()->isStr("main") &&
+      NewVD->getDeclContext()->getRedeclContext()->isTranslationUnit() &&
+      !getLangOpts().Freestanding && !NewVD->getDescribedVarTemplate()) {
+
+    // C++ [basic.start.main]p3
+    // A program that declares a variable main at global scope is ill-formed.
+    if (getLangOpts().CPlusPlus)
+      Diag(D.getLocStart(), diag::err_main_global_variable);
+
+    // In C, and external-linkage variable named main results in undefined
+    // behavior.
+    else if (NewVD->hasExternalFormalLinkage())
+      Diag(D.getLocStart(), diag::warn_main_redefined);
   }
 
   if (D.isRedeclaration() && !Previous.empty()) {
@@ -7450,6 +7489,22 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         Diag(D.getDeclSpec().getConceptSpecLoc(),
              diag::err_function_concept_not_defined);
         NewFD->setInvalidDecl();
+      }
+
+      // C++ Concepts TS [dcl.spec.concept]p1: [...] A function concept shall
+      // have no exception-specification and is treated as if it were specified
+      // with noexcept(true) (15.4). [...]
+      if (const FunctionProtoType *FPT = R->getAs<FunctionProtoType>()) {
+        if (FPT->hasExceptionSpec()) {
+          SourceRange Range;
+          if (D.isFunctionDeclarator())
+            Range = D.getFunctionTypeInfo().getExceptionSpecRange();
+          Diag(NewFD->getLocation(), diag::err_function_concept_exception_spec)
+              << FixItHint::CreateRemoval(Range);
+          NewFD->setInvalidDecl();
+        } else {
+          Context.adjustExceptionSpec(NewFD, EST_BasicNoexcept);
+        }
       }
 
       // C++ Concepts TS [dcl.spec.concept]p2: Every concept definition is
@@ -9926,9 +9981,17 @@ Sema::FinalizeDeclaration(Decl *ThisDecl) {
   // dllimport/dllexport variables cannot be thread local, their TLS index
   // isn't exported with the variable.
   if (DLLAttr && VD->getTLSKind()) {
-    Diag(VD->getLocation(), diag::err_attribute_dll_thread_local) << VD
-                                                                  << DLLAttr;
-    VD->setInvalidDecl();
+    auto *F = dyn_cast_or_null<FunctionDecl>(VD->getParentFunctionOrMethod());
+    if (F && getDLLAttr(F)) {
+      assert(VD->isStaticLocal());
+      // But if this is a static local in a dlimport/dllexport function, the
+      // function will never be inlined, which means the var would never be
+      // imported, so having it marked import/export is safe.
+    } else {
+      Diag(VD->getLocation(), diag::err_attribute_dll_thread_local) << VD
+                                                                    << DLLAttr;
+      VD->setInvalidDecl();
+    }
   }
 
   if (UsedAttr *Attr = VD->getAttr<UsedAttr>()) {
@@ -10001,8 +10064,9 @@ Sema::DeclGroupPtrTy Sema::FinalizeDeclaratorGroup(Scope *S, const DeclSpec &DS,
   if (DeclSpec::isDeclRep(DS.getTypeSpecType())) {
     if (TagDecl *Tag = dyn_cast_or_null<TagDecl>(DS.getRepAsDecl())) {
       handleTagNumbering(Tag, S);
-      if (!Tag->hasNameForLinkage() && !Tag->hasDeclaratorForAnonDecl())
-        Tag->setDeclaratorForAnonDecl(FirstDeclaratorInGroup);
+      if (FirstDeclaratorInGroup && !Tag->hasNameForLinkage() &&
+          getLangOpts().CPlusPlus)
+        Context.addDeclaratorForUnnamedTagDecl(Tag, FirstDeclaratorInGroup);
     }
   }
 
@@ -10383,14 +10447,17 @@ void Sema::ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
   }
 }
 
-Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D) {
+Decl *
+Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
+                              MultiTemplateParamsArg TemplateParameterLists,
+                              SkipBodyInfo *SkipBody) {
   assert(getCurFunctionDecl() == nullptr && "Function parsing confused");
   assert(D.isFunctionDeclarator() && "Not a function declarator!");
   Scope *ParentScope = FnBodyScope->getParent();
 
   D.setFunctionDefinitionKind(FDK_Definition);
-  Decl *DP = HandleDeclarator(ParentScope, D, MultiTemplateParamsArg());
-  return ActOnStartOfFunctionDef(FnBodyScope, DP);
+  Decl *DP = HandleDeclarator(ParentScope, D, TemplateParameterLists);
+  return ActOnStartOfFunctionDef(FnBodyScope, DP, SkipBody);
 }
 
 void Sema::ActOnFinishInlineMethodDef(CXXMethodDecl *D) {
@@ -10454,7 +10521,8 @@ static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD,
 
 void
 Sema::CheckForFunctionRedefinition(FunctionDecl *FD,
-                                   const FunctionDecl *EffectiveDefinition) {
+                                   const FunctionDecl *EffectiveDefinition,
+                                   SkipBodyInfo *SkipBody) {
   // Don't complain if we're in GNU89 mode and the previous definition
   // was an extern inline function.
   const FunctionDecl *Definition = EffectiveDefinition;
@@ -10466,17 +10534,20 @@ Sema::CheckForFunctionRedefinition(FunctionDecl *FD,
     return;
 
   // If we don't have a visible definition of the function, and it's inline or
-  // a template, it's OK to form another definition of it.
-  //
-  // FIXME: Should we skip the body of the function and use the old definition
-  // in this case? That may be necessary for functions that return local types
-  // through a deduced return type, or instantiate templates with local types.
-  if (!hasVisibleDefinition(Definition) &&
+  // a template, skip the new definition.
+  if (SkipBody && !hasVisibleDefinition(Definition) &&
       (Definition->getFormalLinkage() == InternalLinkage ||
        Definition->isInlined() ||
        Definition->getDescribedFunctionTemplate() ||
-       Definition->getNumTemplateParameterLists()))
+       Definition->getNumTemplateParameterLists())) {
+    SkipBody->ShouldSkip = true;
+    if (auto *TD = Definition->getDescribedFunctionTemplate())
+      makeMergedDefinitionVisible(TD, FD->getLocation());
+    else
+      makeMergedDefinitionVisible(const_cast<FunctionDecl*>(Definition),
+                                  FD->getLocation());
     return;
+  }
 
   if (getLangOpts().GNUMode && Definition->isInlineSpecified() &&
       Definition->getStorageClass() == SC_Extern)
@@ -10537,7 +10608,8 @@ static void RebuildLambdaScopeInfo(CXXMethodDecl *CallOperator,
   }
 }
 
-Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
+Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
+                                    SkipBodyInfo *SkipBody) {
   // Clear the last template instantiation error context.
   LastTemplateInstantiationErrorContext = ActiveTemplateInstantiation();
   
@@ -10549,6 +10621,16 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
     FD = FunTmpl->getTemplatedDecl();
   else
     FD = cast<FunctionDecl>(D);
+
+  // See if this is a redefinition.
+  if (!FD->isLateTemplateParsed()) {
+    CheckForFunctionRedefinition(FD, nullptr, SkipBody);
+
+    // If we're skipping the body, we're done. Don't enter the scope.
+    if (SkipBody && SkipBody->ShouldSkip)
+      return D;
+  }
+
   // If we are instantiating a generic lambda call operator, push
   // a LambdaScopeInfo onto the function stack.  But use the information
   // that's already been calculated (ActOnLambdaExpr) to prime the current 
@@ -10567,10 +10649,6 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D) {
   else
     // Enter a new function scope
     PushFunctionScope();
-
-  // See if this is a redefinition.
-  if (!FD->isLateTemplateParsed())
-    CheckForFunctionRedefinition(FD);
 
   // Builtin functions cannot be defined.
   if (unsigned BuiltinID = FD->getBuiltinID()) {
@@ -11086,7 +11164,7 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                                              /*RestrictQualifierLoc=*/NoLoc,
                                              /*MutableLoc=*/NoLoc,
                                              EST_None,
-                                             /*ESpecLoc=*/NoLoc,
+                                             /*ESpecRange=*/SourceRange(),
                                              /*Exceptions=*/nullptr,
                                              /*ExceptionRanges=*/nullptr,
                                              /*NumExceptions=*/0,

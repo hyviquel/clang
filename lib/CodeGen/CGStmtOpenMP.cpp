@@ -5531,7 +5531,7 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
  	  reductionOpName = ".omp_reduction_op.";
 
     llvm::Function *Fn =
-        llvm::Function::Create(FTy, llvm::GlobalValue::ExternalLinkage,
+        llvm::Function::Create(FTy, llvm::GlobalValue::InternalLinkage,
                                reductionOpName, &CGM.getModule());
 
     CGM.SetLLVMFunctionAttributes(CurFuncDecl, FI, Fn);
