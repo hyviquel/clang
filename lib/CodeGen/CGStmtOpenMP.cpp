@@ -906,9 +906,6 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
   CodeGenModule &CGM;
   bool verbose ;
 
-  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
-  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
-
   ArraySubscriptExpr *CurrArrayExpr;
 
   FindKernelArguments(CodeGenFunction &CGF)
@@ -934,11 +931,11 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
          RefExpr = D;
 
       if(MapType == OMP_TGT_MAPTYPE_TO) {
-        InputVarUse[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
         if (verbose) llvm::errs() << " --> input";
       }
       else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-        OutputVarDef[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
         if (verbose) llvm::errs() << " --> output";
       }
       else {
@@ -1473,7 +1470,15 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
       if(isSparkTarget) {
 
+
         DefineJNITypes();
+
+        llvm::DenseMap<const ValueDecl *, unsigned> offloading = CGM.OpenMPSupport.getLastOffloadingMapVariables();
+
+        llvm::errs() << "Offloaded variables \n";
+        for(llvm::DenseMap<const ValueDecl *, unsigned>::iterator iter = offloading.begin(); iter!= offloading.end(); ++iter) {
+          llvm::errs() << iter->first->getName() << " - " << iter->second << "\n";
+        }
 
         const Stmt *Body = S.getAssociatedStmt();
 
@@ -1502,8 +1507,10 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           FindKernelArguments Finder(*this);
           Finder.TraverseStmt(Body2);
 
+          EmitSparkJob();
+
           // Generate function that return element bit size of each input/output
-          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
           {
             GenArgumentElementSize(it->first);
           }
@@ -1527,7 +1534,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           FuncTy_args.push_back(PointerTy_1);
           FuncTy_args.push_back(PointerTy_jobject);
 
-          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
           {
             FuncTy_args.push_back(PointerTy_jobject);
           }
@@ -1610,7 +1617,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           llvm::SmallVector<llvm::Value*, 8> VecPtrValues;
 
           // Allocate, load and cast input variables (i.e. the arguments)
-          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
           {
             const VarDecl *VD = it->first;
             llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
@@ -1645,7 +1652,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           }
 
           // Allocate output variables
-          for (auto it = Finder.OutputVarDef.begin(); it != Finder.OutputVarDef.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
           {
             const VarDecl *VD = it->first;
             llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
@@ -1670,7 +1677,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           auto ptrBarray = VecPtrBarrays.begin();
           auto ptrValue = VecPtrValues.begin();
 
-          for (auto it = Finder.InputVarUse.begin(); it != Finder.InputVarUse.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
           {
             const VarDecl *VD = it->first;
             llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
@@ -1712,7 +1719,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             ptrValue++;
           }
 
-          for (auto it = Finder.OutputVarDef.begin(); it != Finder.OutputVarDef.end(); ++it)
+          for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
           {
             const VarDecl *VD = it->first;
             llvm::SmallVector<const Expr*, 8> DefExprs = it->second;

@@ -4370,6 +4370,7 @@ void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, ll
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMapVariable(const ValueDecl* VD, unsigned Type){
   OpenMPStack.back().OffloadingMapVars[VD] = Type;
+  OpenMPStack.back().OffloadingMapVarsIndex[VD] = OpenMPStack.back().OffloadingMapVarsIndex.size();
 }
 void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types){
   DExprs = OpenMPStack.back().OffloadingMapDecls;
@@ -4382,6 +4383,24 @@ void CodeGenModule::OpenMPSupportStackTy::getAllOffloadingMapVariables(llvm::Sma
   for(OMPStackElemTy& elt : OpenMPStack) {
     DExprs.append(elt.OffloadingMapDecls.begin(), elt.OffloadingMapDecls.end());
     Types.append(elt.OffloadingMapTypes.begin(), elt.OffloadingMapTypes.end());
+  }
+}
+llvm::DenseMap<const ValueDecl *, unsigned> CodeGenModule::OpenMPSupportStackTy::getLastOffloadingMapVariables() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVars.size() > 0) {
+      return I->OffloadingMapVars;
+    }
+  }
+}
+llvm::DenseMap<const ValueDecl *, unsigned> CodeGenModule::OpenMPSupportStackTy::getLastOffloadingMapVarsIndex() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVarsIndex.size() > 0) {
+      return I->OffloadingMapVarsIndex;
+    }
   }
 }
 unsigned CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){

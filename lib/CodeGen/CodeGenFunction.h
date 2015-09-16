@@ -2227,6 +2227,12 @@ public:
   void DefineJNITypes();
   void GenArgumentElementSize(const VarDecl *VD);
 
+  void EmitSparkJob();
+  void EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE);
+  void EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE);
+  void EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE);
+  void EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE);
+
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
   llvm::Function *GenerateCapturedStmtFunction(const CapturedStmt &S);
   llvm::Value *GenerateCapturedStmtArgument(const CapturedStmt &S);
