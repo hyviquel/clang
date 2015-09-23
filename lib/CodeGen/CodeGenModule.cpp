@@ -3955,8 +3955,8 @@ CodeGenModule::OpenMPSupportStackTy::OMPStackElemTy::OMPStackElemTy(
       Mergeable(false), Schedule(0), ChunkSize(0), NewTask(false),
       Untied(false), HasLastPrivate(false), TaskPrivateTy(0), TaskPrivateQTy(),
       TaskPrivateBase(0), NumTeams(0), ThreadLimit(0), WaitDepsArgs(0),
-      MapsBegin(0), MapsEnd(0), OffloadingDevice(0),
-      OffloadingHostFunctionCall(0) {}
+      OffloadingHostFunctionCall(0), MapsBegin(0), MapsEnd(0), OffloadingDevice(0),
+      CurrentIdentifier(0) {}
 
 CodeGenFunction &CodeGenModule::OpenMPSupportStackTy::getCGFForReductionFunction() {
   if (!OpenMPStack.back().RedCGF) {
@@ -4362,22 +4362,25 @@ llvm::Constant *CodeGenModule::GetAddrOfRTTIDescriptor(QualType Ty,
   return getCXXABI().getAddrOfRTTIDescriptor(Ty);
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type){
+  unsigned id = getOffloadingMapCurrentIdentifier();
   OpenMPStack.back().OffloadingMapDecls.push_back(DExpr);
   OpenMPStack.back().OffloadingMapBasePtrs.push_back(BasePtr);
   OpenMPStack.back().OffloadingMapPtrs.push_back(Ptr);
   OpenMPStack.back().OffloadingMapSizes.push_back(Size);
   OpenMPStack.back().OffloadingMapTypes.push_back(Type);
+  OpenMPStack.back().OffloadingMapIdentifiers.push_back(id);
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMapVariable(const ValueDecl* VD, unsigned Type){
   OpenMPStack.back().OffloadingMapVars[VD] = Type;
   OpenMPStack.back().OffloadingMapVarsIndex[VD] = OpenMPStack.back().OffloadingMapVarsIndex.size();
 }
-void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types){
+void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types, ArrayRef<unsigned> &Identifiers){
   DExprs = OpenMPStack.back().OffloadingMapDecls;
   BasePtrs = OpenMPStack.back().OffloadingMapBasePtrs;
   Ptrs  = OpenMPStack.back().OffloadingMapPtrs;
   Sizes = OpenMPStack.back().OffloadingMapSizes;
   Types = OpenMPStack.back().OffloadingMapTypes;
+  Identifiers = OpenMPStack.back().OffloadingMapIdentifiers;
 }
 void CodeGenModule::OpenMPSupportStackTy::getAllOffloadingMapVariables(llvm::SmallVector<const Expr*, 8> &DExprs, llvm::SmallVector<unsigned, 8> &Types){
   for(OMPStackElemTy& elt : OpenMPStack) {

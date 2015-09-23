@@ -588,6 +588,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -601,6 +602,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_nowait() {
       int32_t, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<void **, false>::get(C), llvm::TypeBuilder<int64_t *,
       false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t *, false>::get(C),
       llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
@@ -619,6 +621,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_teams() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t, false>::get(C),
                           llvm::TypeBuilder<int32_t, false>::get(C)};
 
@@ -634,6 +637,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_teams_nowait() {
       int32_t, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<void **, false>::get(C), llvm::TypeBuilder<int64_t *,
       false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t *, false>::get(C),
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<int32_t,
       false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
@@ -651,6 +655,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_begin() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -664,7 +669,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_begin_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 
@@ -680,6 +686,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_end() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -693,7 +700,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_end_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 
@@ -709,6 +717,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_update() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -722,7 +731,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_update_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 

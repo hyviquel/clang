@@ -1278,6 +1278,8 @@ public:
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapPtrs;
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapSizes;
       llvm::SmallVector<unsigned, 8> OffloadingMapTypes;
+      llvm::SmallVector<unsigned, 8> OffloadingMapIdentifiers;
+      unsigned CurrentIdentifier;
       bool MapsBegin;
       bool MapsEnd;
       llvm::Value* OffloadingDevice;
@@ -1330,6 +1332,9 @@ public:
     llvm::Value *getPrevOpenMPPrivateVar(const VarDecl *VD) {
       if (OpenMPStack.size()< 2) return 0;
       return OpenMPStack[OpenMPStack.size() - 2].PrivateVars.count(VD) > 0 ? OpenMPStack[OpenMPStack.size() - 2].PrivateVars[VD] : 0;
+    }
+    unsigned getOffloadingMapCurrentIdentifier() {
+      return OpenMPStack.back().CurrentIdentifier++;
     }
     /// \brief Checks, if the specified variable is currently an argument.
     /// \return 0 if the variable is not an argument, or address of the arguments
@@ -1446,7 +1451,7 @@ public:
     llvm::Value **getWaitDepsArgs();
     void addOffloadingMap(const Expr *DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type);
     void addOffloadingMapVariable(const ValueDecl* VD, unsigned Type);
-    void getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types);
+    void getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types, ArrayRef<unsigned> &Identifiers);
     void setOffloadingMapArguments(llvm::ArrayRef<llvm::Value *> Args) {
       for (auto Arg : Args) {
         OpenMPStack.back().offloadingMapArguments.push_back(Arg);
