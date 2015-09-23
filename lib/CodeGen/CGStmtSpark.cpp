@@ -44,11 +44,14 @@ using namespace CodeGen;
 
 
 void CodeGenFunction::EmitSparkJob() {
-  //char *tmpName = strdup("_kernel_spark_XXXXXX");
-  char *tmpName = strdup("_kernel_spark");
-  int fd = mkstemp (tmpName);
-  llvm::raw_fd_ostream SPARK_FILE(fd, /*shouldClose=*/true);
+  std::error_code EC;
 
+  //char *tmpName = strdup("_kernel_spark_XXXXXX");
+  llvm::raw_fd_ostream SPARK_FILE("_kernel_spark.scala", EC, llvm::sys::fs::F_Text);
+  if (EC) {
+    llvm::errs() << "Couldn't open kernel_spark file for dumping.\nError:" << EC.message() << "\n";
+    exit(1);
+  }
 
   // Header
   SPARK_FILE << "package test.dummy\n" // FIXME: Update package name
@@ -123,8 +126,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
-  //SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
-  //           << "    var mapargs = arguments(2)\n";
+  SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
+            // << "    var mapargs = arguments(2)\n";
+  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
+  {
+    SPARK_FILE << "var maparg = arguments(" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first] << ")";
+  }
 
   llvm::DenseMap<const ValueDecl *, unsigned> offloading = CGM.OpenMPSupport.getLastOffloadingMapVariables();
 
@@ -145,12 +152,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Run the mapping !\n"
-             << "    var mapres = mapargs.map{ x => mappingMethod(";
-  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
-  {
-    SPARK_FILE << "x(addressTable.indexOfArg(" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first] << "))";
-  }
-  SPARK_FILE << ") }\n";
+             << "    var mapres = mapargs.map{ x => mappingMethod(x) }\n";
 
 }
 
