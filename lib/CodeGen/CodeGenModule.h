@@ -1457,7 +1457,6 @@ public:
         OpenMPStack.back().offloadingMapArguments.push_back(Arg);
       }
     }
-    void getAllOffloadingMapVariables(llvm::SmallVector<const Expr*, 8> &DExprs, llvm::SmallVector<unsigned, 8> &Types);
     llvm::SmallVector<llvm::Value *, 16> &getOffloadingMapArguments() {
       return OpenMPStack.back().offloadingMapArguments;
     }

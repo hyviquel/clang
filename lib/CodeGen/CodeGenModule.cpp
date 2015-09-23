@@ -4382,12 +4382,6 @@ void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const 
   Types = OpenMPStack.back().OffloadingMapTypes;
   Identifiers = OpenMPStack.back().OffloadingMapIdentifiers;
 }
-void CodeGenModule::OpenMPSupportStackTy::getAllOffloadingMapVariables(llvm::SmallVector<const Expr*, 8> &DExprs, llvm::SmallVector<unsigned, 8> &Types){
-  for(OMPStackElemTy& elt : OpenMPStack) {
-    DExprs.append(elt.OffloadingMapDecls.begin(), elt.OffloadingMapDecls.end());
-    Types.append(elt.OffloadingMapTypes.begin(), elt.OffloadingMapTypes.end());
-  }
-}
 llvm::DenseMap<const ValueDecl *, unsigned> CodeGenModule::OpenMPSupportStackTy::getLastOffloadingMapVariables() {
   for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
                                     E = OpenMPStack.rend();
