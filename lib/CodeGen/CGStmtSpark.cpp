@@ -133,7 +133,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "var maparg = arguments(" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first] << ")";
   }
 
-  llvm::DenseMap<const ValueDecl *, unsigned> offloading = CGM.OpenMPSupport.getLastOffloadingMapVariables();
+  llvm::DenseMap<const ValueDecl *, unsigned> offloading = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
   int i = 1;
 

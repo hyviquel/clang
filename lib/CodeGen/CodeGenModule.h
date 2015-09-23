@@ -1270,7 +1270,7 @@ public:
       Expr *ThreadLimit;
       llvm::Value **WaitDepsArgs;
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsIndex;
-      llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVars;
+      llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsType;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingOutputVarDef;
       llvm::SmallVector<const Expr *, 8> OffloadingMapDecls;
@@ -1466,8 +1466,8 @@ public:
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingOutputVarDef() {
       return OpenMPStack.back().OffloadingOutputVarDef;
     }
-    llvm::DenseMap<const ValueDecl *, unsigned> getLastOffloadingMapVariables();
-    llvm::DenseMap<const ValueDecl *, unsigned> getLastOffloadingMapVarsIndex();
+    llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsType();
+    llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsIndex();
     unsigned getMapType(const VarDecl* VD);
     void setMapsBegin(bool Flag);
     bool getMapsBegin();

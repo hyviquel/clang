@@ -1473,11 +1473,12 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
         DefineJNITypes();
 
-        llvm::DenseMap<const ValueDecl *, unsigned> offloading = CGM.OpenMPSupport.getLastOffloadingMapVariables();
+        auto& typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
+        auto& indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
         llvm::errs() << "Offloaded variables \n";
-        for(llvm::DenseMap<const ValueDecl *, unsigned>::iterator iter = offloading.begin(); iter!= offloading.end(); ++iter) {
-          llvm::errs() << iter->first->getName() << " - " << iter->second << "\n";
+        for(auto iter = typeMap.begin(); iter!= typeMap.end(); ++iter) {
+          llvm::errs() << iter->first->getName() << " - " << iter->second << " - " << indexMap[iter->first] << "\n";
         }
 
         const Stmt *Body = S.getAssociatedStmt();
