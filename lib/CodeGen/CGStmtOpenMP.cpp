@@ -4441,10 +4441,9 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
 
     assert(VarDecl && "Unexpected expression in the map clause");
 
-    CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
-
     // Do not emit specific code for targets
     if(isTargetMode) {
+      CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
       continue;
     }
 

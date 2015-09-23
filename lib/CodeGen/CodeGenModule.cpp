@@ -4372,7 +4372,7 @@ void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, ll
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMapVariable(const ValueDecl* VD, unsigned Type){
   OpenMPStack.back().OffloadingMapVars[VD] = Type;
-  OpenMPStack.back().OffloadingMapVarsIndex[VD] = OpenMPStack.back().OffloadingMapVarsIndex.size();
+  OpenMPStack.back().OffloadingMapVarsIndex[VD] = getOffloadingMapCurrentIdentifier();
 }
 void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types, ArrayRef<unsigned> &Identifiers){
   DExprs = OpenMPStack.back().OffloadingMapDecls;
