@@ -1547,7 +1547,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
           llvm::Function *MapFn =
             llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
-                                   "Java_test_dummy_Sample1_mappingMethod", &CGM.getModule());
+                                   "Java_org_llvm_openmp_OmpKernel_mappingMethod", &CGM.getModule());
 
           llvm::AttributeSet map_PAL;
           {
