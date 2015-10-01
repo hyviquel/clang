@@ -87,28 +87,8 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   llvm::errs() << "NbInput => " << NbInputs << "\n";
   llvm::errs() << "NbInput => " << NbOutputs << "\n";
 
-  /*
-  // FIXME: Update signature
-  SPARK_FILE << "  \n"
-             << "  @native def mappingMethod(n0 : Array[Byte]";
-  for(unsigned i = 1; i<NbInputs; i++)
-    SPARK_FILE << ", n" << i << " : Array[Byte]";
-  SPARK_FILE << ") : ";
-
-  if(NbOutputs == 1) {
-    // Use a simple ByteArray
-    SPARK_FILE << "Array[Byte]";
-  }
-  else {
-    // Use a tuple of ByteArray
-    SPARK_FILE << "(Array[Byte],";
-    for(unsigned i = 1; i<NbOutputs-1; i++)
-      SPARK_FILE << " Array[Byte],";
-    SPARK_FILE << " Array[Byte])";
-  }*/
-
   SPARK_FILE << "\n";
-  SPARK_FILE << "class OmpKernel {\n";
+  SPARK_FILE << "class OmpKernel {\n\n";
   SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
   for(unsigned i = 1; i<NbInputs; i++)
     SPARK_FILE << ", n" << i << " : Array[Byte]";
@@ -126,15 +106,18 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
 
-  SPARK_FILE << "    // Read each input and store them in RDDs\n";
+  SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
-    SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", 4)\n"; // FIXME: compute exact size
+    // FIXME: compute exact size
+    SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", 4)"
+               << " // Variable " << it->first->getName() <<"\n";
   }
 
   if (InputVarUse.size() > 1) {
-    // FIXME: Make a Sequence when multiple inputs
+    SPARK_FILE << "    \n";
+    SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
     SPARK_FILE << "    var mapargs = Util.makeZip(Seq(";
     std::string prevSep = "";
     for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -142,7 +125,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << prevSep << "arg" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
       prevSep = ", ";
     }
-    SPARK_FILE << "))\n";
+    SPARK_FILE << "))\n\n";
   }
 
 }
@@ -150,26 +133,26 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   unsigned NbInputs = CGM.OpenMPSupport.getOffloadingInputVarUse().size();
 
-  SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
+  SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
     SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingMethod(_) }\n";
   else {
     SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingMethod(x(0)";
     for(unsigned i = 1; i<NbInputs; i++)
       SPARK_FILE << ", x(" << i << ")";
-    SPARK_FILE << ") }\n";
+    SPARK_FILE << ") }\n\n";
   }
 }
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
-  unsigned NbOutputs = CGM.OpenMPSupport.getOffloadingOutputVarDef().size();
+  auto& OutputVarUse = CGM.OpenMPSupport.getOffloadingOutputVarDef();
 
-  SPARK_FILE << "    // Get the result\n";
+  SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
 
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
+  for (auto it = OutputVarUse.begin(); it != OutputVarUse.end(); ++it)
   {
       int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
-      if(NbOutputs == 1)
+      if(OutputVarUse.size() == 1)
         SPARK_FILE << "    val res" << id << " = mapres.collect()\n";
       else
         SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << id << ") }.collect()\n";
