@@ -109,12 +109,10 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "\n";
   SPARK_FILE << "class OmpKernel {\n";
-  SPARK_FILE << "  @native def mappingMethod(n: ";
-  if (NbInputs == 1)
-    SPARK_FILE << "Array[Byte]";
-  else
-    SPARK_FILE << "Seq[Array[Byte]]";
-  SPARK_FILE << "): ";
+  SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
+  for(unsigned i = 1; i<NbInputs; i++)
+    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
   else
@@ -126,19 +124,25 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 }
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
-  unsigned NbInputs = CGM.OpenMPSupport.getOffloadingInputVarUse().size();
+  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
 
   SPARK_FILE << "    // Read each input and store them in RDDs\n";
-  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
     SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", 4)\n"; // FIXME: compute exact size
   }
 
-  if (NbInputs > 1) {
+  if (InputVarUse.size() > 1) {
     // FIXME: Make a Sequence when multiple inputs
-    //SPARK_FILE << "    var maparg = Util.makeZip(" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first] << ")\n";
-    SPARK_FILE << "    var mapargs = Util.makeZip(Seq(arg0))\n";
+    SPARK_FILE << "    var mapargs = Util.makeZip(Seq(";
+    std::string prevSep = "";
+    for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+    {
+      SPARK_FILE << prevSep << "arg" << CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+      prevSep = ", ";
+    }
+    SPARK_FILE << "))\n";
   }
 
 }
@@ -150,7 +154,10 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   if (NbInputs == 1)
     SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingMethod(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingMethod(x) }\n";
+    SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingMethod(x(0)";
+    for(unsigned i = 1; i<NbInputs; i++)
+      SPARK_FILE << ", x(" << i << ")";
+    SPARK_FILE << ") }\n";
   }
 }
 
