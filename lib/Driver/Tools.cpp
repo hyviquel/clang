@@ -374,6 +374,53 @@ static void AddLinkerInputs(const ToolChain &TC,
     addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
 }
 
+static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
+                  const JobAction &JA,
+                  const Tool &T,
+                  const ArgList &Args) {
+  bool isSparkTarget = TC.getTriple().getEnvironment() == llvm::Triple::Spark;
+
+  // This is the compilation for Spark target
+  if ( !isSparkTarget )
+    return;
+
+  std::error_code EC;
+
+  llvm::raw_fd_ostream BUILD_SBT("build.sbt", EC, llvm::sys::fs::F_Text);
+  if (EC) {
+    llvm::errs() << "Couldn't open build.sbt file for dumping.\nError:" << EC.message() << "\n";
+    exit(1);
+  }
+
+  BUILD_SBT << "name := \"test\"\n"
+            << "\n"
+            << "version := \"0.1.0\"\n"
+            << "\n"
+            << "scalaVersion := \"2.10.4\"\n"
+            << "\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.4.0\" % \"provided\"\n"
+            << "\n"
+            << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.1.0-SNAPSHOT\" intransitive()\n";
+
+  llvm::SmallString<128> Path("project");
+  llvm::sys::fs::create_directory(Path);
+  llvm::sys::path::append(Path, "plugins.sbt");
+  llvm::raw_fd_ostream PLUGINS_SBT(Path, EC, llvm::sys::fs::F_Text);
+  if (EC) {
+    llvm::errs() << "Couldn't open plugins.sbt file for dumping.\nError:" << EC.message() << "\n";
+    exit(1);
+  }
+
+  PLUGINS_SBT << "addSbtPlugin(\"com.eed3si9n\" % \"sbt-assembly\" % \"0.14.0\")";
+
+  const char *Exec = Args.MakeArgString(TC.GetProgramPath("sbt"));
+  ArgStringList ExtractArgs;
+  ExtractArgs.push_back("assembly");
+  InputInfo II;
+  C.addCommand(llvm::make_unique<Command>(JA, T, Exec, ExtractArgs, II));
+
+}
+
 static void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
                   const JobAction &JA,
                   const InputInfo &Output,
@@ -6028,8 +6075,10 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   } else
     GCCName = "gcc";
 
-  if (isLinkJob)
+  if (isLinkJob) {
     AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+    AddScalaCompilation(getToolChain(), C, JA, *this, Args);
+  }
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
@@ -6331,6 +6380,7 @@ void hexagon::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                            LinkingOutput);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   std::string Linker = ToolChain.GetProgramPath("hexagon-ld");
   C.addCommand(llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Linker),
@@ -7086,6 +7136,7 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_F);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   // -iframework should be forwarded as -F.
   for (const Arg *A : Args.filtered(options::OPT_iframework))
@@ -7279,6 +7330,7 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetLinkerPath());
@@ -7514,6 +7566,7 @@ void openbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetLinkerPath());
@@ -7651,6 +7704,7 @@ void bitrig::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetLinkerPath());
@@ -7920,6 +7974,7 @@ void freebsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(ToolChain, Args, CmdArgs);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetLinkerPath());
@@ -8212,6 +8267,7 @@ void netbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
@@ -8846,6 +8902,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   C.addCommand(
       llvm::make_unique<Command>(JA, *this, ToolChain.Linker.c_str(), CmdArgs, Inputs));
@@ -9099,6 +9156,7 @@ void minix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
@@ -9275,6 +9333,7 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   addProfileRT(getToolChain(), Args, CmdArgs);
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
@@ -9439,6 +9498,7 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   // We need to special case some linker paths.  In the case of lld, we need to
   // translate 'lld' into 'lld-link', and in the case of the regular msvc
@@ -9859,6 +9919,7 @@ void XCore::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       JA.getOffloadingDevice());
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
@@ -10152,6 +10213,7 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   // add paths specified in LIBRARY_PATH environment variable as -L options
   addDirectoryList(Args, CmdArgs, "-L", "LIBRARY_PATH");
@@ -10337,6 +10399,7 @@ void CrossWindows::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddOpenMPLinkerScript(getToolChain(), C, JA, Output, Inputs, Args, CmdArgs);
+  AddScalaCompilation(getToolChain(), C, JA, *this, Args);
 
   const std::string Linker = TC.GetProgramPath("ld");
   Exec = Args.MakeArgString(Linker);
