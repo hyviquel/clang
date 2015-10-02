@@ -88,7 +88,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   llvm::errs() << "NbInput => " << NbOutputs << "\n";
 
   SPARK_FILE << "\n";
-  SPARK_FILE << "class OmpKernel {\n\n";
+  SPARK_FILE << "class OmpKernel {\n";
   SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
   for(unsigned i = 1; i<NbInputs; i++)
     SPARK_FILE << ", n" << i << " : Array[Byte]";
@@ -98,9 +98,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   else
     SPARK_FILE << "Seq[Array[Byte]]";
   SPARK_FILE << "\n";
-  SPARK_FILE << "\n";
-  SPARK_FILE << "}\n";
-  SPARK_FILE << "\n\n";
+  SPARK_FILE << "}\n\n";
 }
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
