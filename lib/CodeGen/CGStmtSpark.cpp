@@ -108,8 +108,15 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
-    // FIXME: compute exact size
-    SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", 4)"
+
+    // Find the bit size of one element
+    QualType varType = it->first->getType();
+    while(varType->isAnyPointerType()) {
+      varType = varType->getPointeeType();
+    }
+    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
+
+    SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", " << SizeInByte << ")"
                << " // Variable " << it->first->getName() <<"\n";
   }
 
