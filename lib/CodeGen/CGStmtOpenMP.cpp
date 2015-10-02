@@ -918,29 +918,27 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl());
     if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
 
-    if(not CGM.OpenMPSupport.getOpenMPPrivateVar(VD)) {
-      unsigned MapType = CGM.OpenMPSupport.getMapType(VD);
+    unsigned MapType = CGM.OpenMPSupport.getMapType(VD);
 
-      if (verbose) llvm::errs() << " --> That's an argument";
+    if (verbose) llvm::errs() << " --> That's an argument";
 
-      const Expr *RefExpr;
+    const Expr *RefExpr;
 
-      if(CurrArrayExpr != NULL)
-         RefExpr = CurrArrayExpr;
-      else
-         RefExpr = D;
+    if(CurrArrayExpr != NULL)
+       RefExpr = CurrArrayExpr;
+    else
+       RefExpr = D;
 
-      if(MapType == OMP_TGT_MAPTYPE_TO) {
-        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
-        if (verbose) llvm::errs() << " --> input";
-      }
-      else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
-        if (verbose) llvm::errs() << " --> output";
-      }
-      else {
-        if (verbose) llvm::errs() << " --> euuh something";
-      }
+    if(MapType == OMP_TGT_MAPTYPE_TO) {
+      CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
+      if (verbose) llvm::errs() << " --> input";
+    }
+    else if (MapType == OMP_TGT_MAPTYPE_FROM) {
+      CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
+      if (verbose) llvm::errs() << " --> output";
+    }
+    else {
+      if (verbose) llvm::errs() << " --> euuh something";
     }
 
     if(verbose) llvm::errs() << "\n";
