@@ -396,9 +396,9 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
             << "\n"
             << "version := \"0.1.0\"\n"
             << "\n"
-            << "scalaVersion := \"2.10.4\"\n"
+            << "scalaVersion := \"2.11.7\"\n"
             << "\n"
-            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.4.0\" % \"provided\"\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.5.0\" % \"provided\"\n"
             << "\n"
             << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.1.0-SNAPSHOT\" intransitive()\n";
 
