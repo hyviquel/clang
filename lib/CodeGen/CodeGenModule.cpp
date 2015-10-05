@@ -66,6 +66,7 @@ static CGCXXABI *createCXXABI(CodeGenModule &CGM) {
   case TargetCXXABI::iOS64:
   case TargetCXXABI::GenericMIPS:
   case TargetCXXABI::GenericItanium:
+  case TargetCXXABI::WebAssembly:
     return CreateItaniumCXXABI(CGM);
   case TargetCXXABI::Microsoft:
     return CreateMicrosoftCXXABI(CGM);
@@ -823,9 +824,14 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (alignment)
     F->setAlignment(alignment);
 
-  // C++ ABI requires 2-byte alignment for member functions.
-  if (F->getAlignment() < 2 && isa<CXXMethodDecl>(D))
-    F->setAlignment(2);
+  // Some C++ ABIs require 2-byte alignment for member functions, in order to
+  // reserve a bit for differentiating between virtual and non-virtual member
+  // functions. If the current target's C++ ABI requires this and this is a
+  // member function, set its alignment accordingly.
+  if (getTarget().getCXXABI().areMemberFunctionsAligned()) {
+    if (F->getAlignment() < 2 && isa<CXXMethodDecl>(D))
+      F->setAlignment(2);
+  }
 }
 
 void CodeGenModule::SetCommonAttributes(const Decl *D,
@@ -2781,6 +2787,11 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
   assert(AA && "Not an alias?");
 
   StringRef MangledName = getMangledName(GD);
+
+  if (AA->getAliasee() == MangledName) {
+    Diags.Report(AA->getLocation(), diag::err_cyclic_alias);
+    return;
+  }
 
   // If there is a definition in the module, then it wins over the alias.
   // This is dubious, but allow it to be safe.  Just ignore the alias.
