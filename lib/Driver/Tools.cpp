@@ -396,7 +396,7 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
             << "\n"
             << "version := \"0.1.0\"\n"
             << "\n"
-            << "scalaVersion := \"2.11.7\"\n"
+            << "scalaVersion := \"2.10.6\"\n"
             << "\n"
             << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.5.0\" % \"provided\"\n"
             << "\n"
