@@ -1580,18 +1580,11 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
           llvm::PointerType* PointerTy_p3 = llvm::PointerType::get(ArrayTy_2, 0);
           llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
+          llvm::ArrayType* ArrayTy_42 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
           llvm::PointerType* PointerTy_p5 = llvm::PointerType::get(ArrayTy_4, 0);
 
           // Global variable
           llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
-            /*Type=*/ArrayTy_0,
-            /*isConstant=*/true,
-            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-            /*Initializer=*/0,
-            /*Name=*/".str");
-            gvar_array__str->setAlignment(1);
-
-          llvm::GlobalVariable* gvar_array__str2 = new llvm::GlobalVariable(/*Module=*/*mod,
             /*Type=*/ArrayTy_0,
             /*isConstant=*/true,
             /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
@@ -1616,12 +1609,12 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             gvar_array__str_2->setAlignment(1);
 
           llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
-            /*Type=*/ArrayTy_4,
+            /*Type=*/ArrayTy_42,
             /*isConstant=*/true,
             /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
             /*Initializer=*/0,
-            /*Name=*/".str.2");
-            gvar_array__str_2->setAlignment(1);
+            /*Name=*/".str.22");
+            gvar_array__str_22->setAlignment(1);
 
 
 
@@ -1650,7 +1643,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           std::vector<llvm::Constant*> const_ptr_277_2_indices;
           const_ptr_277_2_indices.push_back(const_int64_266);
           const_ptr_277_2_indices.push_back(const_int64_266);
-          llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str2, const_ptr_277_2_indices);
+          llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str, const_ptr_277_2_indices);
 
           std::vector<llvm::Constant*> const_ptr_279_indices;
           const_ptr_279_indices.push_back(const_int64_266);
@@ -1669,7 +1662,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
           // Init global variables
           gvar_array__str->setInitializer(const_array_262);
-          gvar_array__str2->setInitializer(const_array_262_2);
           gvar_array__str_1->setInitializer(const_array_263);
           gvar_array__str_2->setInitializer(const_array_264);
           gvar_array__str_22->setInitializer(const_array_264_2);
