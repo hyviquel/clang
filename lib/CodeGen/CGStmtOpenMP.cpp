@@ -1575,11 +1575,104 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
           llvm::PointerType* PointerTy_4 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
           llvm::PointerType* PointerTy_190 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
+          llvm::ArrayType* ArrayTy_0 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
+          llvm::PointerType* PointerTy_p1 = llvm::PointerType::get(ArrayTy_0, 0);
+          llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
+          llvm::PointerType* PointerTy_p3 = llvm::PointerType::get(ArrayTy_2, 0);
+          llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
+          llvm::PointerType* PointerTy_p5 = llvm::PointerType::get(ArrayTy_4, 0);
+
+          // Global variable
+          llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
+            /*Type=*/ArrayTy_0,
+            /*isConstant=*/true,
+            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+            /*Initializer=*/0,
+            /*Name=*/".str");
+            gvar_array__str->setAlignment(1);
+
+          llvm::GlobalVariable* gvar_array__str2 = new llvm::GlobalVariable(/*Module=*/*mod,
+            /*Type=*/ArrayTy_0,
+            /*isConstant=*/true,
+            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+            /*Initializer=*/0,
+            /*Name=*/".str");
+            gvar_array__str->setAlignment(1);
+
+          llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
+            /*Type=*/ArrayTy_2,
+            /*isConstant=*/true,
+            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+            /*Initializer=*/0,
+            /*Name=*/".str.1");
+            gvar_array__str_1->setAlignment(1);
+
+          llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
+            /*Type=*/ArrayTy_4,
+            /*isConstant=*/true,
+            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+            /*Initializer=*/0,
+            /*Name=*/".str.2");
+            gvar_array__str_2->setAlignment(1);
+
+          llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
+            /*Type=*/ArrayTy_4,
+            /*isConstant=*/true,
+            /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+            /*Initializer=*/0,
+            /*Name=*/".str.2");
+            gvar_array__str_2->setAlignment(1);
+
+
+
+          // Generate useful type and constant
+
           llvm::ConstantInt* const_int32_254 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
           llvm::ConstantInt* const_int64_252 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
           llvm::ConstantInt* const_int32_258 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
           llvm::ConstantInt* const_int32_255 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
+          llvm::ConstantInt* const_int64_266 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
+          llvm::ConstantInt* const_int32_281 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("28"), 10));
+
           llvm::ConstantInt *val = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, 0));
+
+          llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
+          llvm::Constant *const_array_262_2 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple3", true);
+          llvm::Constant *const_array_263 = llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
+          llvm::Constant *const_array_264 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
+          llvm::Constant *const_array_264_2 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
+
+          std::vector<llvm::Constant*> const_ptr_277_indices;
+          const_ptr_277_indices.push_back(const_int64_266);
+          const_ptr_277_indices.push_back(const_int64_266);
+          llvm::Constant* const_ptr_277 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str, const_ptr_277_indices);
+
+          std::vector<llvm::Constant*> const_ptr_277_2_indices;
+          const_ptr_277_2_indices.push_back(const_int64_266);
+          const_ptr_277_2_indices.push_back(const_int64_266);
+          llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str2, const_ptr_277_2_indices);
+
+          std::vector<llvm::Constant*> const_ptr_279_indices;
+          const_ptr_279_indices.push_back(const_int64_266);
+          const_ptr_279_indices.push_back(const_int64_266);
+          llvm::Constant* const_ptr_279 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_1, const_ptr_279_indices);
+
+          std::vector<llvm::Constant*> const_ptr_280_indices;
+          const_ptr_280_indices.push_back(const_int64_266);
+          const_ptr_280_indices.push_back(const_int64_266);
+          llvm::Constant* const_ptr_280 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_2, const_ptr_280_indices);
+
+          std::vector<llvm::Constant*> const_ptr_280_2_indices;
+          const_ptr_280_2_indices.push_back(const_int64_266);
+          const_ptr_280_2_indices.push_back(const_int64_266);
+          llvm::Constant* const_ptr_280_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_22, const_ptr_280_2_indices);
+
+          // Init global variables
+          gvar_array__str->setInitializer(const_array_262);
+          gvar_array__str2->setInitializer(const_array_262_2);
+          gvar_array__str_1->setInitializer(const_array_263);
+          gvar_array__str_2->setInitializer(const_array_264);
+          gvar_array__str_22->setInitializer(const_array_264_2);
 
           // Allocate and load compulsry JNI arguments
           llvm::Function::arg_iterator args = MapFn->arg_begin();
@@ -1718,6 +1811,8 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             ptrValue++;
           }
 
+          llvm::SmallVector<llvm::Value*, 8> results;
+
           for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
           {
             const VarDecl *VD = it->first;
@@ -1783,13 +1878,202 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             }
             void_281->setAttributes(void_281_PAL);
 
-            llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
+            results.push_back(ptr_277);
+            //llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
 
             //for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
             //CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
           }
 
-          //llvm::ReturnInst *ret = CGF.Builder.CreateRet(val);
+          unsigned NbOutputs = CGM.OpenMPSupport.getOffloadingOutputVarDef().size();
+
+          if(NbOutputs == 1) {
+            // Just return the value
+            llvm::ReturnInst *ret = CGF.Builder.CreateRet(results.front());
+          } else if (NbOutputs == 2) {
+            // Construct and return a Tuple2
+
+            llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
+            ptr_327->setAlignment(8);
+            llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
+            llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
+            ptr_329->setAlignment(8);
+            std::vector<llvm::Value*> ptr_330_params;
+            ptr_330_params.push_back(ptr_env);
+            ptr_330_params.push_back(const_ptr_277);
+            llvm::CallInst* ptr_330 = CGF.Builder.CreateCall(ptr_329, ptr_330_params);
+            ptr_330->setCallingConv(llvm::CallingConv::C);
+            ptr_330->setTailCall(false);
+            llvm::AttributeSet ptr_330_PAL;
+            {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_330_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_330->setAttributes(ptr_330_PAL);
+
+             llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
+             ptr_331->setAlignment(8);
+             llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
+             llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
+             ptr_333->setAlignment(8);
+             std::vector<llvm::Value*> ptr_334_params;
+             ptr_334_params.push_back(ptr_env);
+             ptr_334_params.push_back(ptr_330);
+             ptr_334_params.push_back(const_ptr_279);
+             ptr_334_params.push_back(const_ptr_280);
+             llvm::CallInst* ptr_334 = CGF.Builder.CreateCall(ptr_333, ptr_334_params);
+             ptr_334->setCallingConv(llvm::CallingConv::C);
+             ptr_334->setTailCall(false);
+             llvm::AttributeSet ptr_334_PAL;
+             {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_334_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_334->setAttributes(ptr_334_PAL);
+
+             llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
+             ptr_335->setAlignment(8);
+             llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
+             llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
+             ptr_337->setAlignment(8);
+             std::vector<llvm::Value*> ptr_338_params;
+             ptr_338_params.push_back(ptr_env);
+             ptr_338_params.push_back(ptr_330);
+             ptr_338_params.push_back(ptr_334);
+             ptr_338_params.push_back(results[0]);
+             ptr_338_params.push_back(results[1]);
+             llvm::CallInst* ptr_338 = CGF.Builder.CreateCall(ptr_337, ptr_338_params);
+             ptr_338->setCallingConv(llvm::CallingConv::C);
+             ptr_338->setTailCall(false);
+             llvm::AttributeSet ptr_338_PAL;
+             {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_338_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_338->setAttributes(ptr_338_PAL);
+
+             llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
+          } else if (NbOutputs == 3) {
+            // Construct and return a Tuple3
+
+            llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
+            ptr_327->setAlignment(8);
+            llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
+            llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
+            ptr_329->setAlignment(8);
+            std::vector<llvm::Value*> ptr_330_params;
+            ptr_330_params.push_back(ptr_env);
+            ptr_330_params.push_back(const_ptr_277_2);
+            llvm::CallInst* ptr_330 = CGF.Builder.CreateCall(ptr_329, ptr_330_params);
+            ptr_330->setCallingConv(llvm::CallingConv::C);
+            ptr_330->setTailCall(false);
+            llvm::AttributeSet ptr_330_PAL;
+            {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_330_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_330->setAttributes(ptr_330_PAL);
+
+             llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
+             ptr_331->setAlignment(8);
+             llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
+             llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
+             ptr_333->setAlignment(8);
+             std::vector<llvm::Value*> ptr_334_params;
+             ptr_334_params.push_back(ptr_env);
+             ptr_334_params.push_back(ptr_330);
+             ptr_334_params.push_back(const_ptr_279);
+             ptr_334_params.push_back(const_ptr_280_2);
+             llvm::CallInst* ptr_334 = CGF.Builder.CreateCall(ptr_333, ptr_334_params);
+             ptr_334->setCallingConv(llvm::CallingConv::C);
+             ptr_334->setTailCall(false);
+             llvm::AttributeSet ptr_334_PAL;
+             {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_334_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_334->setAttributes(ptr_334_PAL);
+
+             llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
+             ptr_335->setAlignment(8);
+             llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
+             llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
+             ptr_337->setAlignment(8);
+             std::vector<llvm::Value*> ptr_338_params;
+             ptr_338_params.push_back(ptr_env);
+             ptr_338_params.push_back(ptr_330);
+             ptr_338_params.push_back(ptr_334);
+             ptr_338_params.push_back(results[0]);
+             ptr_338_params.push_back(results[1]);
+             ptr_338_params.push_back(results[2]);
+             llvm::CallInst* ptr_338 = CGF.Builder.CreateCall(ptr_337, ptr_338_params);
+             ptr_338->setCallingConv(llvm::CallingConv::C);
+             ptr_338->setTailCall(false);
+             llvm::AttributeSet ptr_338_PAL;
+             {
+              llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+              llvm::AttributeSet PAS;
+               {
+                llvm::AttrBuilder B;
+                B.addAttribute(llvm::Attribute::NoUnwind);
+                PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+               }
+
+              Attrs.push_back(PAS);
+              ptr_338_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+             }
+             ptr_338->setAttributes(ptr_338_PAL);
+
+             llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
+          } else if (NbOutputs == 4) {
+            // Construct and return a Collection
+          }
         }
       } else {
       llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
