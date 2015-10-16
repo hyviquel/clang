@@ -95,6 +95,10 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
+  else if (NbOutputs == 2)
+    SPARK_FILE << "Tuple2[Array[Byte], Array[Byte]]";
+  else if (NbOutputs == 3)
+    SPARK_FILE << "Tuple3[Array[Byte], Array[Byte], Array[Byte]]";
   else
     SPARK_FILE << "Seq[Array[Byte]]";
   SPARK_FILE << "\n";
@@ -153,15 +157,24 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& OutputVarUse = CGM.OpenMPSupport.getOffloadingOutputVarDef();
 
   SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
+  int i=0;
 
   for (auto it = OutputVarUse.begin(); it != OutputVarUse.end(); ++it)
   {
       int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
       if(OutputVarUse.size() == 1)
+        // 1 output -> return the result directly
         SPARK_FILE << "    val res" << id << " = mapres.collect()\n";
-      else
-        SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << id << ") }.collect()\n";
+      else if(OutputVarUse.size() == 2 || OutputVarUse.size() == 3) {
+        // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+        SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}.collect()\n";
+      }
+      else {
+        // More than 3 outputs -> extract each variable from the Collection
+        SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }.collect()\n";
+      }
       SPARK_FILE << "    info.write(" << id << ", res" << id << ".flatten)\n";
+      i++;
   }
 
 }
