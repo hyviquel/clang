@@ -907,6 +907,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
   bool verbose ;
 
   ArraySubscriptExpr *CurrArrayExpr;
+  Expr *CurrArrayIndexExpr;
 
   FindKernelArguments(CodeGenFunction &CGF)
       : CGF(CGF), CGM(CGF.CGM) {
@@ -925,10 +926,11 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       const Expr *RefExpr;
 
-      if(CurrArrayExpr != nullptr)
-         RefExpr = CurrArrayExpr;
-      else
-         RefExpr = D;
+      if(CurrArrayExpr != nullptr) {
+        RefExpr = CurrArrayExpr;
+      } else {
+        RefExpr = D;
+      }
 
       if(MapType == OMP_TGT_MAPTYPE_TO) {
         CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
@@ -943,6 +945,12 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
       }
 
       if(verbose) llvm::errs() << "\n";
+
+      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->isRValue()) {
+        if(verbose) llvm::errs() << "Require reordering\n";
+        exit(0);
+      }
+
     }
 
     return true;
@@ -950,10 +958,12 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
   bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
     CurrArrayExpr = A;
+    CurrArrayIndexExpr = A->getIdx();
 
     // Skip array indexes since the pointer will index directly the right element
     TraverseStmt(A->getBase());
     CurrArrayExpr = nullptr;
+    CurrArrayIndexExpr = nullptr;
     return true;
   }
 
