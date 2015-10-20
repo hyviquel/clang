@@ -1521,13 +1521,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
           EmitSparkJob();
 
-          // Generate function that return element bit size of each input/output
-          for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
-          {
-            GenArgumentElementSize(it->first);
-          }
-
-
           // Create the mapping function
           llvm::Module *mod = &(CGM.getModule());
 
