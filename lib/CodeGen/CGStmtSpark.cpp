@@ -88,6 +88,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   llvm::errs() << "NbInput => " << NbOutputs << "\n";
 
   SPARK_FILE << "\n";
+  SPARK_FILE << "import org.apache.spark.SparkFiles\n";
   SPARK_FILE << "class OmpKernel {\n";
   SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
   for(unsigned i = 1; i<NbInputs; i++)
@@ -102,6 +103,25 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   else
     SPARK_FILE << "Seq[Array[Byte]]";
   SPARK_FILE << "\n";
+  SPARK_FILE << "  def mappingWrapper(n0 : Array[Byte]";
+  for(unsigned i = 1; i<NbInputs; i++)
+    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << ") : ";
+  if (NbOutputs == 1)
+    SPARK_FILE << "Array[Byte]";
+  else if (NbOutputs == 2)
+    SPARK_FILE << "Tuple2[Array[Byte], Array[Byte]]";
+  else if (NbOutputs == 3)
+    SPARK_FILE << "Tuple3[Array[Byte], Array[Byte], Array[Byte]]";
+  else
+    SPARK_FILE << "Seq[Array[Byte]]";
+  SPARK_FILE << " = {\n";
+  SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+  SPARK_FILE << "    return mappingMethod(n0";
+  for(unsigned i = 1; i<NbInputs; i++)
+    SPARK_FILE << ", n" << i;
+  SPARK_FILE << ")\n";
+  SPARK_FILE << "  }\n";
   SPARK_FILE << "}\n\n";
 }
 
@@ -144,9 +164,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingMethod(_) }\n";
+    SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingWrapper(info, _) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingMethod(x(0)";
+    SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingWrapper(x(0)";
     for(unsigned i = 1; i<NbInputs; i++)
       SPARK_FILE << ", x(" << i << ")";
     SPARK_FILE << ") }\n\n";
