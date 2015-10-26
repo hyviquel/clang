@@ -946,7 +946,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(verbose) llvm::errs() << "\n";
 
-      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->isRValue()) {
+      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
         if(verbose) llvm::errs() << "Require reordering\n";
         exit(0);
       }
