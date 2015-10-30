@@ -2226,6 +2226,7 @@ public:
 
   void DefineJNITypes();
   void GenArgumentElementSize(const VarDecl *VD);
+  void GenerateMappingKernel(const OMPExecutableDirective &S);
 
   void EmitSparkJob();
   void EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE);
