@@ -81,12 +81,17 @@ void CodeGenFunction::EmitSparkJob() {
 }
 
 void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
-  unsigned NbInputs = CGM.OpenMPSupport.getOffloadingInputVarUse().size();
+  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+
+  unsigned NbInputs = 0;
+  // FIXME: For now, we always pass a version of inputs without reordering
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+    NbInputs += CGM.OpenMPSupport.getOffloadingInputReorderNb()[it->first] + 1;
+  // Outputs are reorder a posteriori
   unsigned NbOutputs = CGM.OpenMPSupport.getOffloadingOutputVarDef().size();
 
   llvm::errs() << "NbInput => " << NbInputs << "\n";
-  llvm::errs() << "NbInput => " << NbOutputs << "\n";
-
+  llvm::errs() << "NbOutput => " << NbOutputs << "\n";
   SPARK_FILE << "\n";
   SPARK_FILE << "import org.apache.spark.SparkFiles\n";
   SPARK_FILE << "class OmpKernel {\n";
@@ -127,6 +132,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -142,6 +148,29 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", " << SizeInByte << ")"
                << " // Variable " << it->first->getName() <<"\n";
+  }
+
+  int NbIndex = 1;
+
+  for(int i=0; i<NbIndex; i++) {
+    SPARK_FILE << "    val index" << i << " = info.sc.parallelize(0.toLong to 1000)";
+    SPARK_FILE << "// Variable ??";
+  }
+
+  SPARK_FILE << "    val index = index0";
+  for(int i=1; i<NbIndex; i++) {
+    SPARK_FILE << ".cartesian(index" << i << ")";
+  }
+  SPARK_FILE << ".zipWithIndex()";
+
+  SPARK_FILE << "    // Reorder input when needed\n";
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+  {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+
+    for (int i=1; i<InputReorderNb[it->first]; i++) {
+    }
+
   }
 
   if (InputVarUse.size() > 1) {

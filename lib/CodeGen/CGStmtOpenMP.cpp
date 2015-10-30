@@ -900,6 +900,61 @@ void CodeGenFunction::GenArgumentElementSize(const VarDecl *VD) {
 
 /// A StmtVisitor that propagates the raw counts through the AST and
 /// records the count at statements where the value may change.
+struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments> {
+
+  CodeGenFunction &CGF;
+  CodeGenModule &CGM;
+  bool verbose;
+
+  llvm::SmallVector<const Expr*,8> inputs;
+
+  ArraySubscriptExpr *CurrArrayExpr;
+  Expr *CurrArrayIndexExpr;
+
+  FindIndexingArguments(CodeGenFunction &CGF)
+      : CGF(CGF), CGM(CGF.CGM) {
+    verbose = CGM.getCodeGenOpts().AsmVerbose;
+    CurrArrayExpr = NULL;
+  }
+
+  bool VisitDeclRefExpr(DeclRefExpr *D) {
+
+    if(const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
+      if(verbose) llvm::errs() << "Indexing use the variable " << VD->getName();
+      const Expr *RefExpr;
+
+      if(CurrArrayExpr != nullptr) {
+        RefExpr = CurrArrayExpr;
+        if(verbose) llvm::errs() << "Require more advanced analysis\n";
+        exit(0);
+      } else {
+        RefExpr = D;
+      }
+
+      inputs.push_back(RefExpr);
+
+      if(verbose) llvm::errs() << "\n";
+    }
+
+    return true;
+  }
+
+  bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
+    CurrArrayExpr = A;
+    CurrArrayIndexExpr = A->getIdx();
+
+    // Skip array indexes since the pointer will index directly the right element
+    TraverseStmt(A->getBase());
+    CurrArrayExpr = nullptr;
+    CurrArrayIndexExpr = nullptr;
+    return true;
+  }
+
+};
+
+
+/// A StmtVisitor that propagates the raw counts through the AST and
+/// records the count at statements where the value may change.
 struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
   CodeGenFunction &CGF;
@@ -948,7 +1003,10 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
         if(verbose) llvm::errs() << "Require reordering\n";
-        exit(0);
+        //CurrArrayIndexExpr->Profile();
+        FindIndexingArguments Finder(CGF);
+        Finder.TraverseStmt(CurrArrayIndexExpr);
+        //Finder.inputs;
       }
 
     }
