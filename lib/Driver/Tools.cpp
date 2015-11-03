@@ -6173,10 +6173,13 @@ void gcc::Linker::RenderExtraToolArgs(const JobAction &JA,
                                       const ArgList &Args) const {
   // The types are (hopefully) good enough.
 
+  bool isSparkTarget = Args.hasArg(options::OPT_omptargets_EQ) &&
+      getToolChain().getTriple().getEnvironment() == llvm::Triple::Spark;
+
   if (!Args.hasArg(options::OPT_nostdlib))
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {
       if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
-                       options::OPT_fno_openmp, false)) {
+                       options::OPT_fno_openmp, false) && !isSparkTarget) {
         switch (getOpenMPRuntime(getToolChain(), Args)) {
         case OMPRT_OMP:
           CmdArgs.push_back("-lomp");
@@ -8885,8 +8888,11 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       bool WantPthread = Args.hasArg(options::OPT_pthread) ||
                          Args.hasArg(options::OPT_pthreads);
 
+      bool isSparkTarget = OpenMPTarget &&
+          getToolChain().getTriple().getEnvironment() == llvm::Triple::Spark;
+
       if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
-                       options::OPT_fno_openmp, false)) {
+                       options::OPT_fno_openmp, false) && !isSparkTarget) {
         // OpenMP runtimes implies pthreads when using the GNU toolchain.
         // FIXME: Does this really make sense for all GNU toolchains?
         WantPthread = true;

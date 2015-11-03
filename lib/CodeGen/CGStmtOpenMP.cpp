@@ -1245,7 +1245,13 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
   CGM.OpenMPSupport.setOrdered(false);
   CGM.OpenMPSupport.setDistribute(IsDistribute);
 
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
 
+  if(isSparkTarget) {
+    GenerateMappingKernel(S);
+    return;
+  }
 
   // CodeGen for clauses (task init).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
@@ -1320,12 +1326,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
                             Schedule == KMP_SCH_DISTRIBUTE_STATIC;
     // CodeGen for "omp for {Associated statement}".
     {
-      bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
-          CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
-
-      if(isSparkTarget) {
-        GenerateMappingKernel(S);
-      } else {
       llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
       llvm::Value *GTid =
           OPENMPRTL_THREADNUM(S.getLocStart(), *this);
@@ -1730,7 +1730,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
          I != E; ++I)
       if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
         EmitPostOMPClause(*(*I), S);
-  }
   }
 
   // CodeGen for clauses (closing steps).
