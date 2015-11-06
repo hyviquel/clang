@@ -1245,14 +1245,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
   CGM.OpenMPSupport.setOrdered(false);
   CGM.OpenMPSupport.setDistribute(IsDistribute);
 
-  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
-      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
-
-  if(isSparkTarget) {
-    GenerateMappingKernel(S);
-    return;
-  }
-
   // CodeGen for clauses (task init).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
                                        E = S.clauses().end();
@@ -1266,6 +1258,8 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitAfterInitOMPClause(*(*I), S);
+
+
 
   bool IsDistributeLoop = DKind == OMPD_distribute ||
                           DKind == OMPD_distribute_simd ||
@@ -1326,6 +1320,19 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
                             Schedule == KMP_SCH_DISTRIBUTE_STATIC;
     // CodeGen for "omp for {Associated statement}".
     {
+      bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+          CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+
+      if(isSparkTarget) {
+        // CodeGen for clauses (call end).
+        for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(), E =
+            S.clauses().end(); I != E; ++I)
+          if (*I && !IsAllowedClause((*I)->getClauseKind(), SKind))
+            EmitPostOMPClause(*(*I), S);
+
+        GenerateMappingKernel(S);
+      } else {
+
       llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
       llvm::Value *GTid =
           OPENMPRTL_THREADNUM(S.getLocStart(), *this);
@@ -1730,6 +1737,8 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
          I != E; ++I)
       if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
         EmitPostOMPClause(*(*I), S);
+
+    }
   }
 
   // CodeGen for clauses (closing steps).
@@ -1738,6 +1747,7 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitCloseOMPClause(*(*I), S);
+
 
   // CodeGen for clauses (task finalize).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
@@ -5073,6 +5083,15 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
                                             const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    GenerateReductionKernel(C, S);
+    return;
+  }
+
   // Type1 tmp1(var1);
   // anon.field1 = &tmp1;
   // Type2 tmp2(var2);
@@ -5130,6 +5149,14 @@ CodeGenFunction::EmitPreOMPReductionClause(const OMPReductionClause &C,
                                            const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    return;
+  }
+
   // Type1 tmp1(var1);
   // anon.field1 = &tmp1;
   // Type2 tmp2(var2);
@@ -5420,8 +5447,8 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
   bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
-      // for spark, we do not need to run the reduction
-      return;
+    // for spark, we do not need to run the reduction
+    return;
   }
 
   if (!Switch) {
@@ -6307,6 +6334,14 @@ CodeGenFunction::EmitCloseOMPReductionClause(const OMPReductionClause &C,
                                              const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    return;
+  }
+
   llvm::BasicBlock *RedBB1;
   llvm::BasicBlock *RedBB2;
   llvm::Instruction *IP1;
