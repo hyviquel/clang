@@ -625,12 +625,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::PointerType* PointerTy_190 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
   llvm::ArrayType* ArrayTy_0 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
-  llvm::PointerType* PointerTy_p1 = llvm::PointerType::get(ArrayTy_0, 0);
   llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
-  llvm::PointerType* PointerTy_p3 = llvm::PointerType::get(ArrayTy_2, 0);
   llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
   llvm::ArrayType* ArrayTy_42 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
-  llvm::PointerType* PointerTy_p5 = llvm::PointerType::get(ArrayTy_4, 0);
 
   // Global variable
   llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
@@ -674,9 +671,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::ConstantInt* const_int32_258 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
   llvm::ConstantInt* const_int32_255 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
   llvm::ConstantInt* const_int64_266 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
-  llvm::ConstantInt* const_int32_281 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("28"), 10));
-
-  llvm::ConstantInt *val = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, 0));
 
   llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
   llvm::Constant *const_array_262_2 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple3", true);
@@ -869,7 +863,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_276->setAlignment(8);
     std::vector<llvm::Value*> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(const_int32_258);
+    ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
     llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
     ptr_277->setCallingConv(llvm::CallingConv::C);
     ptr_277->setTailCall(true);
@@ -898,7 +892,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     void_281_params.push_back(ptr_env);
     void_281_params.push_back(ptr_277);
     void_281_params.push_back(const_int32_254);
-    void_281_params.push_back(const_int32_258);
+    void_281_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
     void_281_params.push_back(ptr_273);
     llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
     void_281->setCallingConv(llvm::CallingConv::C);
