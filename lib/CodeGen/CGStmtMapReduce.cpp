@@ -114,13 +114,9 @@ void CodeGenFunction::GenArgumentElementSize(const VarDecl *VD) {
 
     // Block  (label_252)
     llvm::AllocaInst* alloca_env = LBuilder.CreateAlloca(PointerTy_1);
-    alloca_env->setAlignment(8);
     llvm::AllocaInst* alloca_obj = LBuilder.CreateAlloca(PointerTy_jobject);
-    alloca_obj->setAlignment(8);
     llvm::StoreInst* store_env = LBuilder.CreateStore(ptr_env, alloca_env);
-    store_env->setAlignment(8);
     llvm::StoreInst* store_obj = LBuilder.CreateStore(ptr_obj, alloca_obj);
-    store_obj->setAlignment(8);
     LBuilder.CreateRet(const_size);
 
   }
@@ -334,7 +330,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                      /*Initializer=*/0,
                                                                      /*Name=*/".str");
-    gvar_array__str->setAlignment(1);
 
     llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                        /*Type=*/ArrayTy_2,
@@ -342,7 +337,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
                                                                        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                        /*Initializer=*/0,
                                                                        /*Name=*/".str.1");
-    gvar_array__str_1->setAlignment(1);
 
     llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                        /*Type=*/ArrayTy_4,
@@ -350,7 +344,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
                                                                        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                        /*Initializer=*/0,
                                                                        /*Name=*/".str.2");
-    gvar_array__str_2->setAlignment(1);
 
     llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                         /*Type=*/ArrayTy_42,
@@ -358,8 +351,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
                                                                         /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                         /*Initializer=*/0,
                                                                         /*Name=*/".str.22");
-    gvar_array__str_22->setAlignment(1);
-
 
 
     // Generate useful type and constant
@@ -388,21 +379,15 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     llvm::Function::arg_iterator args = RedFn->arg_begin();
     args->setName("env");
     llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-    alloca_env->setAlignment(8);
     llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
-    store_env->setAlignment(8);
     args++;
     args->setName("obj");
     llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    alloca_env->setAlignment(8);
     llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
-    store_env->setAlignment(8);
     args++;
 
     llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
-    ptr_env->setAlignment(8);
     llvm::LoadInst* ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_270->setAlignment(8);
 
     std::vector<llvm::Value*> ptr_271_indices;
     ptr_271_indices.push_back(const_int32_254);
@@ -410,17 +395,13 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 
     llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
     llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-    ptr_272->setAlignment(8);
     llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
-    ptr_273->setAlignment(8);
 
     llvm::AllocaInst* alloca_arg1 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    alloca_obj->setAlignment(8);
 
     llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
 
     llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg1, "");
-    ptr_274->setAlignment(8);
     std::vector<llvm::Value*> ptr_275_params;
     ptr_275_params.push_back(ptr_273);
     ptr_275_params.push_back(ptr_274);
@@ -436,12 +417,9 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     args++;
 
     llvm::AllocaInst* alloca_arg2 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    alloca_obj->setAlignment(8);
     llvm::StoreInst* store_arg2 = CGF.Builder.CreateStore(args, alloca_arg2);
-    store_obj->setAlignment(8);
 
     llvm::LoadInst* ptr_274_1 = CGF.Builder.CreateLoad(alloca_arg2, "");
-    ptr_274_1->setAlignment(8);
     std::vector<llvm::Value*> ptr_275_1_params;
     ptr_275_1_params.push_back(ptr_273);
     ptr_275_1_params.push_back(ptr_274_1);
@@ -508,11 +486,9 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     //llvm::Value* bitres = CGF.Builder.CreateBitCast(res, )
 
     llvm::LoadInst* ptr_27422 = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_27422->setAlignment(8);
 
     llvm::Value* ptr_275_2 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_27422, 0, 176);
     llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275_2, "");
-    ptr_276->setAlignment(8);
     std::vector<llvm::Value*> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
     ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
@@ -536,10 +512,8 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     ptr_277->setAttributes(ptr_277_PAL);
 
     llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_278->setAlignment(8);
     llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
     llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-    ptr_280->setAlignment(8);
     llvm::Value* ptr_res_cast = CGF.Builder.CreateBitCast(alloca_res, PointerTy_4, "");
     std::vector<llvm::Value*> void_281_params;
     void_281_params.push_back(ptr_env);
@@ -684,7 +658,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                    /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                    /*Initializer=*/0,
                                                                    /*Name=*/".str");
-  gvar_array__str->setAlignment(1);
 
   llvm::GlobalVariable* gvar_array__str2 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                     /*Type=*/ArrayTy_0,
@@ -692,7 +665,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                     /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                     /*Initializer=*/0,
                                                                     /*Name=*/".str");
-  gvar_array__str2->setAlignment(1);
 
   llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                      /*Type=*/ArrayTy_2,
@@ -700,7 +672,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                      /*Initializer=*/0,
                                                                      /*Name=*/".str.1");
-  gvar_array__str_1->setAlignment(1);
 
   llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                      /*Type=*/ArrayTy_4,
@@ -708,7 +679,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                      /*Initializer=*/0,
                                                                      /*Name=*/".str.2");
-  gvar_array__str_2->setAlignment(1);
 
   llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                       /*Type=*/ArrayTy_42,
@@ -716,8 +686,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                       /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                       /*Initializer=*/0,
                                                                       /*Name=*/".str.22");
-  gvar_array__str_22->setAlignment(1);
-
 
 
   // Generate useful type and constant
@@ -770,21 +738,15 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::Function::arg_iterator args = MapFn->arg_begin();
   args->setName("env");
   llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-  alloca_env->setAlignment(8);
   llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
-  store_env->setAlignment(8);
   args++;
   args->setName("obj");
   llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  alloca_env->setAlignment(8);
   llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
-  store_env->setAlignment(8);
   args++;
 
   llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
-  ptr_env->setAlignment(8);
   llvm::LoadInst* ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
-  ptr_270->setAlignment(8);
 
   std::vector<llvm::Value*> ptr_271_indices;
   ptr_271_indices.push_back(const_int32_254);
@@ -792,9 +754,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
   llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-  ptr_272->setAlignment(8);
   llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
-  ptr_273->setAlignment(8);
 
   // Keep values that have to be used for releasing.
   llvm::SmallVector<llvm::Value*, 8> VecPtrBarrays;
@@ -808,14 +768,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     args->setName(VD->getName());
     llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    alloca_obj->setAlignment(8);
     llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-    store_obj->setAlignment(8);
 
     llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
 
     llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
-    ptr_274->setAlignment(8);
     std::vector<llvm::Value*> ptr_275_params;
     ptr_275_params.push_back(ptr_273);
     ptr_275_params.push_back(ptr_274);
@@ -849,7 +806,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     llvm::Type *TyObject = ConvertType(varType);
     llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject);
-    alloca_res->setAlignment(8);
 
     for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
       CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
@@ -867,13 +823,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
 
     llvm::LoadInst* ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_xx->setAlignment(8);
     std::vector<llvm::Value*> ptr_270_indices;
     ptr_270_indices.push_back(const_int64_252);
     ptr_270_indices.push_back(const_int32_255);
     llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_xx, 0, 192);
     llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
-    ptr_271->setAlignment(8);
 
     std::vector<llvm::Value*> void_272_params;
     void_272_params.push_back(ptr_env);
@@ -914,10 +868,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_4, "");
     llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_274->setAlignment(8);
     llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
     llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
-    ptr_276->setAlignment(8);
     std::vector<llvm::Value*> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
     ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
@@ -941,10 +893,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_277->setAttributes(ptr_277_PAL);
 
     llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-    ptr_278->setAlignment(8);
     llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
     llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-    ptr_280->setAlignment(8);
     std::vector<llvm::Value*> void_281_params;
     void_281_params.push_back(ptr_env);
     void_281_params.push_back(ptr_277);
@@ -986,10 +936,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // Construct and return a Tuple2
 
     llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_327->setAlignment(8);
     llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
-    ptr_329->setAlignment(8);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
     ptr_330_params.push_back(const_ptr_277);
@@ -1013,10 +961,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_330->setAttributes(ptr_330_PAL);
 
     llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_331->setAlignment(8);
     llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
     llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
-    ptr_333->setAlignment(8);
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
     ptr_334_params.push_back(ptr_330);
@@ -1042,10 +988,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_334->setAttributes(ptr_334_PAL);
 
     llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_335->setAlignment(8);
     llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
     llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
-    ptr_337->setAlignment(8);
     std::vector<llvm::Value*> ptr_338_params;
     ptr_338_params.push_back(ptr_env);
     ptr_338_params.push_back(ptr_330);
@@ -1076,10 +1020,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // Construct and return a Tuple3
 
     llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_327->setAlignment(8);
     llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
-    ptr_329->setAlignment(8);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
     ptr_330_params.push_back(const_ptr_277_2);
@@ -1103,10 +1045,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_330->setAttributes(ptr_330_PAL);
 
     llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_331->setAlignment(8);
     llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
     llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
-    ptr_333->setAlignment(8);
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
     ptr_334_params.push_back(ptr_330);
@@ -1132,10 +1072,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_334->setAttributes(ptr_334_PAL);
 
     llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
-    ptr_335->setAlignment(8);
     llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
     llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
-    ptr_337->setAlignment(8);
     std::vector<llvm::Value*> ptr_338_params;
     ptr_338_params.push_back(ptr_env);
     ptr_338_params.push_back(ptr_330);
