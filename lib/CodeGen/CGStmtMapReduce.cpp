@@ -259,7 +259,6 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const OMPExecutableDirective &S) {
   DefineJNITypes();
 
-
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
 
@@ -271,256 +270,305 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
   llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
   llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
 
-  // Initialize arguments
-  std::vector<llvm::Type*> FuncTy_args;
+  for (OMPReductionClause::varlist_const_iterator I = C.varlist_begin(), E = C.varlist_end(); I != E; ++I) {
 
-  // Add compulsary arguments
-  FuncTy_args.push_back(PointerTy_1);
-  FuncTy_args.push_back(PointerTy_jobject);
+    const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
+    QualType QTy = (*I)->getType();
 
-  FuncTy_args.push_back(PointerTy_jobject);
-  FuncTy_args.push_back(PointerTy_jobject);
+    // Initialize arguments
+    std::vector<llvm::Type*> FuncTy_args;
 
-  llvm::FunctionType* FnTy = llvm::FunctionType::get(
-        /*Result=*/PointerTy_jobject,
-        /*Params=*/FuncTy_args,
-        /*isVarArg=*/false);
+    // Add compulsary arguments
+    FuncTy_args.push_back(PointerTy_1);
+    FuncTy_args.push_back(PointerTy_jobject);
 
-  llvm::Function *RedFn =
-      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
-                             "Java_org_llvm_openmp_OmpKernel_reduceMethod", mod);
+    FuncTy_args.push_back(PointerTy_jobject);
+    FuncTy_args.push_back(PointerTy_jobject);
 
-  llvm::AttributeSet red_PAL;
-  {
-    SmallVector<llvm::AttributeSet, 4> Attrs;
-    llvm::AttributeSet PAS;
+    llvm::FunctionType* FnTy = llvm::FunctionType::get(
+          /*Result=*/PointerTy_jobject,
+          /*Params=*/FuncTy_args,
+          /*isVarArg=*/false);
+
+    llvm::Twine RedFnName = "Java_org_llvm_openmp_OmpKernel_reduceMethod_" + VD->getName();
+
+    llvm::Function *RedFn =
+        llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage, RedFnName, mod);
+
+    llvm::AttributeSet red_PAL;
     {
-      llvm::AttrBuilder B;
-      B.addAttribute(llvm::Attribute::NoUnwind);
-      B.addAttribute(llvm::Attribute::StackProtect);
-      B.addAttribute(llvm::Attribute::UWTable);
-      PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+      SmallVector<llvm::AttributeSet, 4> Attrs;
+      llvm::AttributeSet PAS;
+      {
+        llvm::AttrBuilder B;
+        B.addAttribute(llvm::Attribute::NoUnwind);
+        B.addAttribute(llvm::Attribute::StackProtect);
+        B.addAttribute(llvm::Attribute::UWTable);
+        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+      }
+
+      Attrs.push_back(PAS);
+      red_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
     }
+    RedFn->setAttributes(red_PAL);
 
-    Attrs.push_back(PAS);
-    red_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+    // Initialize a new CodeGenFunction used to generate the reduction
+    CodeGenFunction CGF(CGM, true);
+    CGF.CurFn = RedFn;
+    CGF.EnsureInsertPoint();
 
-  }
-  RedFn->setAttributes(red_PAL);
+    // Generate useful type and constant
+    llvm::PointerType* PointerTy_4 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
+    llvm::PointerType* PointerTy_190 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
-  // Initialize a new CodeGenFunction used to generate the reduction
-  CodeGenFunction CGF(CGM, true);
-  CGF.CurFn = RedFn;
-  CGF.EnsureInsertPoint();
+    llvm::ArrayType* ArrayTy_0 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
+    llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
+    llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
+    llvm::ArrayType* ArrayTy_42 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
 
-  // Generate useful type and constant
-  llvm::PointerType* PointerTy_4 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
-  llvm::PointerType* PointerTy_190 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
-
-  llvm::ArrayType* ArrayTy_0 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
-  llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
-  llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
-  llvm::ArrayType* ArrayTy_42 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
-
-  // Global variable
-  llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                   /*Type=*/ArrayTy_0,
-                                                                   /*isConstant=*/true,
-                                                                   /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                   /*Initializer=*/0,
-                                                                   /*Name=*/".str");
-  gvar_array__str->setAlignment(1);
-
-  llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                     /*Type=*/ArrayTy_2,
+    // Global variable
+    llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
+                                                                     /*Type=*/ArrayTy_0,
                                                                      /*isConstant=*/true,
                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
                                                                      /*Initializer=*/0,
-                                                                     /*Name=*/".str.1");
-  gvar_array__str_1->setAlignment(1);
+                                                                     /*Name=*/".str");
+    gvar_array__str->setAlignment(1);
 
-  llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                     /*Type=*/ArrayTy_4,
-                                                                     /*isConstant=*/true,
-                                                                     /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                     /*Initializer=*/0,
-                                                                     /*Name=*/".str.2");
-  gvar_array__str_2->setAlignment(1);
+    llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
+                                                                       /*Type=*/ArrayTy_2,
+                                                                       /*isConstant=*/true,
+                                                                       /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+                                                                       /*Initializer=*/0,
+                                                                       /*Name=*/".str.1");
+    gvar_array__str_1->setAlignment(1);
 
-  llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                      /*Type=*/ArrayTy_42,
-                                                                      /*isConstant=*/true,
-                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                      /*Initializer=*/0,
-                                                                      /*Name=*/".str.22");
-  gvar_array__str_22->setAlignment(1);
+    llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
+                                                                       /*Type=*/ArrayTy_4,
+                                                                       /*isConstant=*/true,
+                                                                       /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+                                                                       /*Initializer=*/0,
+                                                                       /*Name=*/".str.2");
+    gvar_array__str_2->setAlignment(1);
+
+    llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
+                                                                        /*Type=*/ArrayTy_42,
+                                                                        /*isConstant=*/true,
+                                                                        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+                                                                        /*Initializer=*/0,
+                                                                        /*Name=*/".str.22");
+    gvar_array__str_22->setAlignment(1);
 
 
 
-  // Generate useful type and constant
+    // Generate useful type and constant
 
-  llvm::ConstantInt* const_int32_254 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
-  llvm::ConstantInt* const_int32_258 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
-  llvm::ConstantInt* const_int32_255 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
-  llvm::ConstantInt* const_int64_266 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
+    llvm::ConstantInt* const_int32_254 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
+    llvm::ConstantInt* const_int32_258 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
+    llvm::ConstantInt* const_int32_255 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
+    llvm::ConstantInt* const_int64_266 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
 
-  llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
-  llvm::Constant *const_array_263 = llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
-  llvm::Constant *const_array_264 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
-  llvm::Constant *const_array_264_2 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
+    llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
+    llvm::Constant *const_array_263 = llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
+    llvm::Constant *const_array_264 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
+    llvm::Constant *const_array_264_2 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
 
-  std::vector<llvm::Constant*> const_ptr_277_indices;
-  const_ptr_277_indices.push_back(const_int64_266);
-  const_ptr_277_indices.push_back(const_int64_266);
+    std::vector<llvm::Constant*> const_ptr_277_indices;
+    const_ptr_277_indices.push_back(const_int64_266);
+    const_ptr_277_indices.push_back(const_int64_266);
 
-  // Init global variables
-  gvar_array__str->setInitializer(const_array_262);
-  gvar_array__str_1->setInitializer(const_array_263);
-  gvar_array__str_2->setInitializer(const_array_264);
-  gvar_array__str_22->setInitializer(const_array_264_2);
+    // Init global variables
+    gvar_array__str->setInitializer(const_array_262);
+    gvar_array__str_1->setInitializer(const_array_263);
+    gvar_array__str_2->setInitializer(const_array_264);
+    gvar_array__str_22->setInitializer(const_array_264_2);
 
-  // Allocate and load compulsry JNI arguments
-  llvm::Function::arg_iterator args = RedFn->arg_begin();
-  args->setName("env");
-  llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-  alloca_env->setAlignment(8);
-  llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
-  store_env->setAlignment(8);
-  args++;
-  args->setName("obj");
-  llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  alloca_env->setAlignment(8);
-  llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
-  store_env->setAlignment(8);
-  args++;
+    // Allocate and load compulsry JNI arguments
+    llvm::Function::arg_iterator args = RedFn->arg_begin();
+    args->setName("env");
+    llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
+    alloca_env->setAlignment(8);
+    llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
+    store_env->setAlignment(8);
+    args++;
+    args->setName("obj");
+    llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
+    alloca_env->setAlignment(8);
+    llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
+    store_env->setAlignment(8);
+    args++;
 
-  llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
-  ptr_env->setAlignment(8);
-  llvm::LoadInst* ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
-  ptr_270->setAlignment(8);
+    llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
+    ptr_env->setAlignment(8);
+    llvm::LoadInst* ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
+    ptr_270->setAlignment(8);
 
-  std::vector<llvm::Value*> ptr_271_indices;
-  ptr_271_indices.push_back(const_int32_254);
-  ptr_271_indices.push_back(const_int32_255);
+    std::vector<llvm::Value*> ptr_271_indices;
+    ptr_271_indices.push_back(const_int32_254);
+    ptr_271_indices.push_back(const_int32_255);
 
-  llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
-  llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-  ptr_272->setAlignment(8);
-  llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
-  ptr_273->setAlignment(8);
+    llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
+    llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
+    ptr_272->setAlignment(8);
+    llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
+    ptr_273->setAlignment(8);
 
-  llvm::AllocaInst* alloca_arg1 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  alloca_obj->setAlignment(8);
+    llvm::AllocaInst* alloca_arg1 = CGF.Builder.CreateAlloca(PointerTy_jobject);
+    alloca_obj->setAlignment(8);
 
-  llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
+    llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
 
-  llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg1, "");
-  ptr_274->setAlignment(8);
-  std::vector<llvm::Value*> ptr_275_params;
-  ptr_275_params.push_back(ptr_273);
-  ptr_275_params.push_back(ptr_274);
-  ptr_275_params.push_back(const_ptr_256);
-  llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
-  ptr_275->setCallingConv(llvm::CallingConv::C);
-  ptr_275->setTailCall(false);
-  llvm::AttributeSet ptr_275_PAL;
-  ptr_275->setAttributes(ptr_275_PAL);
-  llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
-  llvm::Value* ptr_265_3 = CGF.Builder.CreateLoad(ptr_265);
-  llvm::Value* ptr_265_3_cast =  CGF.Builder.CreateBitCast(ptr_265_3, CGF.Builder.getInt32Ty());
-  args++;
+    llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg1, "");
+    ptr_274->setAlignment(8);
+    std::vector<llvm::Value*> ptr_275_params;
+    ptr_275_params.push_back(ptr_273);
+    ptr_275_params.push_back(ptr_274);
+    ptr_275_params.push_back(const_ptr_256);
+    llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
+    ptr_275->setCallingConv(llvm::CallingConv::C);
+    ptr_275->setTailCall(false);
+    llvm::AttributeSet ptr_275_PAL;
+    ptr_275->setAttributes(ptr_275_PAL);
+    llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
+    llvm::Value* ptr_265_3 = CGF.Builder.CreateLoad(ptr_265);
+    llvm::Value* ptr_265_3_cast =  CGF.Builder.CreateBitCast(ptr_265_3, CGF.Builder.getInt32Ty());
+    args++;
 
-  llvm::AllocaInst* alloca_arg2 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  alloca_obj->setAlignment(8);
-  llvm::StoreInst* store_arg2 = CGF.Builder.CreateStore(args, alloca_arg2);
-  store_obj->setAlignment(8);
+    llvm::AllocaInst* alloca_arg2 = CGF.Builder.CreateAlloca(PointerTy_jobject);
+    alloca_obj->setAlignment(8);
+    llvm::StoreInst* store_arg2 = CGF.Builder.CreateStore(args, alloca_arg2);
+    store_obj->setAlignment(8);
 
-  llvm::LoadInst* ptr_274_1 = CGF.Builder.CreateLoad(alloca_arg2, "");
-  ptr_274_1->setAlignment(8);
-  std::vector<llvm::Value*> ptr_275_1_params;
-  ptr_275_1_params.push_back(ptr_273);
-  ptr_275_1_params.push_back(ptr_274_1);
-  ptr_275_1_params.push_back(const_ptr_256);
-  llvm::CallInst* ptr_275_1 = CGF.Builder.CreateCall(ptr_272, ptr_275_1_params);
-  ptr_275_1->setCallingConv(llvm::CallingConv::C);
-  ptr_275_1->setTailCall(false);
-  llvm::AttributeSet ptr_275_1_PAL;
-  ptr_275_1->setAttributes(ptr_275_1_PAL);
-  llvm::Value* ptr_265_1 =  CGF.Builder.CreateBitCast(ptr_275_1, PointerTy_190);
+    llvm::LoadInst* ptr_274_1 = CGF.Builder.CreateLoad(alloca_arg2, "");
+    ptr_274_1->setAlignment(8);
+    std::vector<llvm::Value*> ptr_275_1_params;
+    ptr_275_1_params.push_back(ptr_273);
+    ptr_275_1_params.push_back(ptr_274_1);
+    ptr_275_1_params.push_back(const_ptr_256);
+    llvm::CallInst* ptr_275_1 = CGF.Builder.CreateCall(ptr_272, ptr_275_1_params);
+    ptr_275_1->setCallingConv(llvm::CallingConv::C);
+    ptr_275_1->setTailCall(false);
+    llvm::AttributeSet ptr_275_1_PAL;
+    ptr_275_1->setAttributes(ptr_275_1_PAL);
+    llvm::Value* ptr_265_1 =  CGF.Builder.CreateBitCast(ptr_275_1, PointerTy_190);
 
-  llvm::Value* ptr_265_2 = CGF.Builder.CreateLoad(ptr_265_1);
+    llvm::Value* ptr_265_2 = CGF.Builder.CreateLoad(ptr_265_1);
 
-  llvm::Value* ptr_265_2_cast =  CGF.Builder.CreateBitCast(ptr_265_2, CGF.Builder.getInt32Ty());
+    llvm::Value* ptr_265_2_cast =  CGF.Builder.CreateBitCast(ptr_265_2, CGF.Builder.getInt32Ty());
 
-  llvm::Value* res = CGF.Builder.CreateAdd(ptr_265_3_cast, ptr_265_2_cast);
-  res->dump();
-  llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(CGF.Builder.getInt32Ty());
+    llvm::Value* res = nullptr;
 
-  CGF.Builder.CreateStore(res,alloca_res);
-  //llvm::Value* bitres = CGF.Builder.CreateBitCast(res, )
-
-  llvm::LoadInst* ptr_27422 = CGF.Builder.CreateLoad(ptr_env, "");
-  ptr_27422->setAlignment(8);
-
-  llvm::Value* ptr_275_2 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_27422, 0, 176);
-  llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275_2, "");
-  ptr_276->setAlignment(8);
-  std::vector<llvm::Value*> ptr_277_params;
-  ptr_277_params.push_back(ptr_env);
-  ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
-  llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-  ptr_277->setCallingConv(llvm::CallingConv::C);
-  ptr_277->setTailCall(true);
-  llvm::AttributeSet ptr_277_PAL;
-  {
-    llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
-    llvm::AttributeSet PAS;
-    {
-      llvm::AttrBuilder B;
-      B.addAttribute(llvm::Attribute::NoUnwind);
-      PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+    switch (C.getOperator()) {
+      case OMPC_REDUCTION_or:
+      case OMPC_REDUCTION_bitor:{
+        res = CGF.Builder.CreateOr(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_bitxor:{
+        res = CGF.Builder.CreateXor(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_sub:{
+        res = CGF.Builder.CreateSub(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_add: {
+        res = CGF.Builder.CreateAdd(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_and:
+      case OMPC_REDUCTION_bitand: {
+        res = CGF.Builder.CreateAnd(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_mult: {
+        res = CGF.Builder.CreateMul(ptr_265_3_cast, ptr_265_2_cast);
+        break;
+      }
+      case OMPC_REDUCTION_min: {
+        break;
+      }
+      case OMPC_REDUCTION_max: {
+        // TODO
+        break;
+      }
+      case OMPC_REDUCTION_custom:
+        llvm_unreachable("Custom initialization cannot be NULLed.");
+      case OMPC_REDUCTION_unknown:
+      case NUM_OPENMP_REDUCTION_OPERATORS:
+        llvm_unreachable("Unkonwn operator kind.");
     }
 
-    Attrs.push_back(PAS);
-    ptr_277_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
 
-  }
-  ptr_277->setAttributes(ptr_277_PAL);
+    res->dump();
+    llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(CGF.Builder.getInt32Ty());
 
-  llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-  ptr_278->setAlignment(8);
-  llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
-  llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-  ptr_280->setAlignment(8);
-  llvm::Value* ptr_res_cast = CGF.Builder.CreateBitCast(alloca_res, PointerTy_4, "");
-  std::vector<llvm::Value*> void_281_params;
-  void_281_params.push_back(ptr_env);
-  void_281_params.push_back(ptr_277);
-  void_281_params.push_back(const_int32_254);
-  void_281_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
-  void_281_params.push_back(ptr_res_cast);
-  llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-  void_281->setCallingConv(llvm::CallingConv::C);
-  void_281->setTailCall(false);
-  llvm::AttributeSet void_281_PAL;
-  {
-    llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
-    llvm::AttributeSet PAS;
+    CGF.Builder.CreateStore(res,alloca_res);
+    //llvm::Value* bitres = CGF.Builder.CreateBitCast(res, )
+
+    llvm::LoadInst* ptr_27422 = CGF.Builder.CreateLoad(ptr_env, "");
+    ptr_27422->setAlignment(8);
+
+    llvm::Value* ptr_275_2 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_27422, 0, 176);
+    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275_2, "");
+    ptr_276->setAlignment(8);
+    std::vector<llvm::Value*> ptr_277_params;
+    ptr_277_params.push_back(ptr_env);
+    ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
+    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    ptr_277->setCallingConv(llvm::CallingConv::C);
+    ptr_277->setTailCall(true);
+    llvm::AttributeSet ptr_277_PAL;
     {
-      llvm::AttrBuilder B;
-      B.addAttribute(llvm::Attribute::NoUnwind);
-      PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
-    }
+      llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+      llvm::AttributeSet PAS;
+      {
+        llvm::AttrBuilder B;
+        B.addAttribute(llvm::Attribute::NoUnwind);
+        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+      }
 
-    Attrs.push_back(PAS);
-    void_281_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+      Attrs.push_back(PAS);
+      ptr_277_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+    }
+    ptr_277->setAttributes(ptr_277_PAL);
+
+    llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
+    ptr_278->setAlignment(8);
+    llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
+    llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
+    ptr_280->setAlignment(8);
+    llvm::Value* ptr_res_cast = CGF.Builder.CreateBitCast(alloca_res, PointerTy_4, "");
+    std::vector<llvm::Value*> void_281_params;
+    void_281_params.push_back(ptr_env);
+    void_281_params.push_back(ptr_277);
+    void_281_params.push_back(const_int32_254);
+    void_281_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
+    void_281_params.push_back(ptr_res_cast);
+    llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
+    void_281->setCallingConv(llvm::CallingConv::C);
+    void_281->setTailCall(false);
+    llvm::AttributeSet void_281_PAL;
+    {
+      llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+      llvm::AttributeSet PAS;
+      {
+        llvm::AttrBuilder B;
+        B.addAttribute(llvm::Attribute::NoUnwind);
+        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+      }
+
+      Attrs.push_back(PAS);
+      void_281_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+    }
+    void_281->setAttributes(void_281_PAL);
+
+    llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
 
   }
-  void_281->setAttributes(void_281_PAL);
-
-  llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
-
-  RedFn->dump();
 }
 
 
@@ -638,6 +686,14 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                                                                    /*Name=*/".str");
   gvar_array__str->setAlignment(1);
 
+  llvm::GlobalVariable* gvar_array__str2 = new llvm::GlobalVariable(/*Module=*/*mod,
+                                                                    /*Type=*/ArrayTy_0,
+                                                                    /*isConstant=*/true,
+                                                                    /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
+                                                                    /*Initializer=*/0,
+                                                                    /*Name=*/".str");
+  gvar_array__str2->setAlignment(1);
+
   llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
                                                                      /*Type=*/ArrayTy_2,
                                                                      /*isConstant=*/true,
@@ -686,7 +742,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   std::vector<llvm::Constant*> const_ptr_277_2_indices;
   const_ptr_277_2_indices.push_back(const_int64_266);
   const_ptr_277_2_indices.push_back(const_int64_266);
-  llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str, const_ptr_277_2_indices);
+  llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str2, const_ptr_277_2_indices);
 
   std::vector<llvm::Constant*> const_ptr_279_indices;
   const_ptr_279_indices.push_back(const_int64_266);
@@ -705,6 +761,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Init global variables
   gvar_array__str->setInitializer(const_array_262);
+  gvar_array__str2->setInitializer(const_array_262_2);
   gvar_array__str_1->setInitializer(const_array_263);
   gvar_array__str_2->setInitializer(const_array_264);
   gvar_array__str_22->setInitializer(const_array_264_2);
