@@ -4011,6 +4011,11 @@ CodeGenModule::OpenMPSupportStackTy::getReductionRecVar(CodeGenFunction &CGF) {
   return OpenMPStack.back().ReductionRecVar;
 }
 
+llvm::DenseMap<const VarDecl *, unsigned>
+CodeGenModule::OpenMPSupportStackTy::getReductionMap() {
+  return OpenMPStack.back().ReductionMap;
+}
+
 llvm::Type *
 CodeGenModule::OpenMPSupportStackTy::getReductionRec() {
   assert(OpenMPStack.back().ReductionRec &&
@@ -4040,6 +4045,11 @@ unsigned
 CodeGenModule::OpenMPSupportStackTy::getReductionVarIdx(const VarDecl *VD) {
   assert (OpenMPStack.back().ReductionMap.count(VD) > 0 && "No reduction var.");
   return OpenMPStack.back().ReductionMap[VD];
+}
+
+bool
+CodeGenModule::OpenMPSupportStackTy::isReduced(const VarDecl *VD) {
+  return OpenMPStack.back().ReductionMap.count(VD) > 0;
 }
 
 llvm::Value *CodeGenModule::OpenMPSupportStackTy::getReductionSwitch() {

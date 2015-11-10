@@ -5077,6 +5077,19 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
 
+  for (OMPReductionClause::varlist_const_iterator I = C.varlist_begin(),
+                                                  E = C.varlist_end();
+       I != E; ++I) {
+    // Get element type.
+    const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
+    QualType QTy = (*I)->getType();
+    // if (!QTy->isScalarType())
+    //  llvm_unreachable("Reduction variables with aggregate"
+    //                   "types are not supported yet!");
+    llvm::Type *PtrType = ConvertType(getContext().getPointerType(QTy));
+    CGM.OpenMPSupport.registerReductionVar(VD, PtrType);
+  }
+
   bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
@@ -5121,19 +5134,6 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
     CGF.StartFunction(GlobalDecl(), getContext().VoidTy, Fn, FI, Args,
                       SourceLocation());
     ReductionFunc = CGF.CurFn;
-  }
-
-  for (OMPReductionClause::varlist_const_iterator I = C.varlist_begin(),
-                                                  E = C.varlist_end();
-       I != E; ++I) {
-    // Get element type.
-    const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
-    QualType QTy = (*I)->getType();
-    // if (!QTy->isScalarType())
-    //  llvm_unreachable("Reduction variables with aggregate"
-    //                   "types are not supported yet!");
-    llvm::Type *PtrType = ConvertType(getContext().getPointerType(QTy));
-    CGM.OpenMPSupport.registerReductionVar(VD, PtrType);
   }
 }
 

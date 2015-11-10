@@ -126,7 +126,14 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   for(unsigned i = 1; i<NbInputs; i++)
     SPARK_FILE << ", n" << i;
   SPARK_FILE << ")\n";
-  SPARK_FILE << "  }\n";
+  SPARK_FILE << "  }\n\n";
+
+  llvm::DenseMap<const VarDecl *, unsigned> reductionMap = CGM.OpenMPSupport.getReductionMap();
+
+  for(auto it = reductionMap.begin(); it != reductionMap.end(); ++it) {
+    SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
+  }
+
   SPARK_FILE << "}\n\n";
 }
 
@@ -193,7 +200,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingWrapper(info, _) }\n";
+    SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingWrapper(_) }\n";
   else {
     SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingWrapper(x(0)";
     for(unsigned i = 1; i<NbInputs; i++)
@@ -211,18 +218,26 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   for (auto it = OutputVarUse.begin(); it != OutputVarUse.end(); ++it)
   {
       int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
-      if(OutputVarUse.size() == 1)
+      bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
+      if(OutputVarUse.size() == 1) {
         // 1 output -> return the result directly
-        SPARK_FILE << "    val res" << id << " = mapres.collect()\n";
+        SPARK_FILE << "    val res" << id << " = mapres.";
+      }
       else if(OutputVarUse.size() == 2 || OutputVarUse.size() == 3) {
         // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-        SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}.collect()\n";
+        SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}.";
       }
       else {
         // More than 3 outputs -> extract each variable from the Collection
-        SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }.collect()\n";
+        SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }.";
       }
-      SPARK_FILE << "    info.write(" << id << ", res" << id << ".flatten)\n";
+
+      if(isReduced)
+        SPARK_FILE << "reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
+      else
+        SPARK_FILE << "collect().flatten\n";
+
+      SPARK_FILE << "    info.write(" << id << ", res" << id << ")\n";
       i++;
   }
 
