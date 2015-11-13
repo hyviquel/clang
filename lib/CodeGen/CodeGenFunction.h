@@ -2229,7 +2229,7 @@ public:
   void GenerateMappingKernel(const OMPExecutableDirective &S);
   void GenerateReductionKernel(const OMPReductionClause &C, const OMPExecutableDirective &S);
   void GenerateReorderingKernels();
-  void GenerateReorderingKernel(VarDecl* varDecl, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression);
+  void GenerateReorderingKernel(const VarDecl* varDecl, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression);
 
 
   void EmitSparkJob();

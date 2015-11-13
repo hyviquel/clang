@@ -228,7 +228,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
         if(verbose) llvm::errs() << "Require reordering\n";
-        CGM.OpenMPSupport.getExprToReorderExprMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
+        CGM.OpenMPSupport.getReorderMap()[VD][RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
 
         //CurrArrayIndexExpr->Profile();
         //Finder.inputs;
@@ -1194,18 +1194,20 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 }
 
 void CodeGenFunction::GenerateReorderingKernels() {
-  auto& ReorderMap = CGM.OpenMPSupport.getExprToReorderExprMap();
+  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
 
   for(auto it = ReorderMap.begin(); it != ReorderMap.end(); ++it) {
-    FindIndexingArguments Finder(*this);
-    Expr *expr = const_cast<Expr*>(it->second);
-    Finder.TraverseStmt(expr);
-    VarDecl *var = nullptr;
-    GenerateReorderingKernel(var, Finder.InputsMap, it->second);
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      FindIndexingArguments Finder(*this);
+      Expr *expr = const_cast<Expr*>(it2->second);
+      Finder.TraverseStmt(expr);
+      VarDecl *var = nullptr;
+      GenerateReorderingKernel(it->first, Finder.InputsMap, it2->second);
+    }
   }
 }
 
-void CodeGenFunction::GenerateReorderingKernel(VarDecl* VD, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression) {
+void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression) {
   CodeGenFunction CGF(CGM, true);
   DefineJNITypes();
 

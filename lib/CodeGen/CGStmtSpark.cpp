@@ -134,6 +134,19 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
   }
 
+  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+
+  for(auto it = ReorderMap.begin(); it != ReorderMap.end(); ++it) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      llvm::FoldingSetNodeID ExprID;
+      it2->second->Profile(ExprID, getContext(), true);
+      SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
+      // TODO: Add multiple input
+      SPARK_FILE << ") : Long\n";
+    }
+  }
+
   SPARK_FILE << "}\n\n";
 }
 
@@ -153,31 +166,43 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
-    SPARK_FILE << "    val arg" << id << " = info.read(" << id << ", " << SizeInByte << ")"
+    SPARK_FILE << "    val arg" << id << " = info.indexedRead(" << id << ", " << SizeInByte << ")"
                << " // Variable " << it->first->getName() <<"\n";
   }
 
   int NbIndex = 1;
 
   for(int i=0; i<NbIndex; i++) {
-    SPARK_FILE << "    val index" << i << " = info.sc.parallelize(0.toLong to 1000)";
-    SPARK_FILE << "// Variable ??";
+    SPARK_FILE << "    val index" << i << " = info.sc.parallelize(0.toLong to 100000)";
+    SPARK_FILE << "// Variable ??\n";
   }
 
   SPARK_FILE << "    val index = index0";
   for(int i=1; i<NbIndex; i++) {
     SPARK_FILE << ".cartesian(index" << i << ")";
   }
-  SPARK_FILE << ".zipWithIndex()";
+  SPARK_FILE << ".zipWithIndex().map{case (x,y) => (y,x)}"; // FIXME: Inverse with more indexes
 
   SPARK_FILE << "    // Reorder input when needed\n";
-  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-  {
+
+  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+
+
+  for(auto it = ReorderMap.begin(); it != ReorderMap.end(); ++it) {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      llvm::FoldingSetNodeID ExprID;
+      it2->second->Profile(ExprID, getContext(), true);
 
-    for (int i=1; i<InputReorderNb[it->first]; i++) {
+      if(NbIndex == 1) {
+        SPARK_FILE << "    val reorder" << id << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
+      }
+      else {
+        // TODO:
+      }
+
+      SPARK_FILE << "    val input" << id << " = reorder" << id << ".join(arg" << id << ").map(_._2)\n";
     }
-
   }
 
   if (InputVarUse.size() > 1) {
@@ -200,9 +225,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = arg0.map{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    var mapres = arg0.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.map{ x => new OmpKernel().mappingWrapper(x(0)";
+    SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(x(0)";
     for(unsigned i = 1; i<NbInputs; i++)
       SPARK_FILE << ", x(" << i << ")";
     SPARK_FILE << ") }\n\n";
@@ -221,23 +246,23 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
       bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
       if(OutputVarUse.size() == 1) {
         // 1 output -> return the result directly
-        SPARK_FILE << "    val res" << id << " = mapres.";
+        SPARK_FILE << "    val res" << id << " = mapres";
       }
       else if(OutputVarUse.size() == 2 || OutputVarUse.size() == 3) {
         // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-        SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}.";
+        SPARK_FILE << "    val res" << id << " = mapres.mapValues { x => x._" << i+1 << "}";
       }
       else {
         // More than 3 outputs -> extract each variable from the Collection
-        SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }.";
+        SPARK_FILE << "    val res" << id << " = mapres.mapValues { x => x(" << i << ") }";
       }
 
       if(isReduced)
-        SPARK_FILE << "reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
+        SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
       else
-        SPARK_FILE << "collect().flatten\n";
+        SPARK_FILE << "\n";
 
-      SPARK_FILE << "    info.write(" << id << ", res" << id << ")\n";
+      SPARK_FILE << "    info.indexedWrite(" << id << ", res" << id << ")\n";
       i++;
   }
 
