@@ -2228,6 +2228,9 @@ public:
   void GenArgumentElementSize(const VarDecl *VD);
   void GenerateMappingKernel(const OMPExecutableDirective &S);
   void GenerateReductionKernel(const OMPReductionClause &C, const OMPExecutableDirective &S);
+  void GenerateReorderingKernels();
+  void GenerateReorderingKernel(VarDecl* varDecl, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression);
+
 
   void EmitSparkJob();
   void EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE);

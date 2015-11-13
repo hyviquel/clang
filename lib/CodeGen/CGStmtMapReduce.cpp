@@ -131,7 +131,7 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
   CodeGenModule &CGM;
   bool verbose;
 
-  llvm::SmallVector<const Expr*,8> inputs;
+  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*,8>> InputsMap;
 
   ArraySubscriptExpr *CurrArrayExpr;
   Expr *CurrArrayIndexExpr;
@@ -156,7 +156,7 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
         RefExpr = D;
       }
 
-      inputs.push_back(RefExpr);
+      InputsMap[VD].push_back(RefExpr);
 
       if(verbose) llvm::errs() << "\n";
     }
@@ -228,9 +228,9 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
         if(verbose) llvm::errs() << "Require reordering\n";
+        CGM.OpenMPSupport.getExprToReorderExprMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
+
         //CurrArrayIndexExpr->Profile();
-        FindIndexingArguments Finder(CGF);
-        Finder.TraverseStmt(CurrArrayIndexExpr);
         //Finder.inputs;
       }
 
@@ -630,6 +630,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   DefineJNITypes();
 
+
   auto& typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   auto& indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
@@ -660,12 +661,17 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
   Body = For->getBody();
 
+
+
   // Detect input/output expression from the loop body
   Stmt *Body2 = const_cast<Stmt*>(Body);
   FindKernelArguments Finder(*this);
   Finder.TraverseStmt(Body2);
 
   EmitSparkJob();
+
+
+  GenerateReorderingKernels();
 
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
@@ -1186,3 +1192,113 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // Construct and return a Collection
   }
 }
+
+void CodeGenFunction::GenerateReorderingKernels() {
+  auto& ReorderMap = CGM.OpenMPSupport.getExprToReorderExprMap();
+
+  for(auto it = ReorderMap.begin(); it != ReorderMap.end(); ++it) {
+    FindIndexingArguments Finder(*this);
+    Expr *expr = const_cast<Expr*>(it->second);
+    Finder.TraverseStmt(expr);
+    VarDecl *var = nullptr;
+    GenerateReorderingKernel(var, Finder.InputsMap, it->second);
+  }
+}
+
+void CodeGenFunction::GenerateReorderingKernel(VarDecl* VD, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression) {
+  CodeGenFunction CGF(CGM, true);
+  DefineJNITypes();
+
+  // Create the mapping function
+  llvm::Module *mod = &(CGM.getModule());
+
+  // Get JNI type
+  llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
+  llvm::PointerType* PointerTy_JNINativeInterface = llvm::PointerType::get(StructTy_JNINativeInterface, 0);
+  llvm::PointerType* PointerTy_1 = llvm::PointerType::get(PointerTy_JNINativeInterface, 0);
+
+  llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
+  llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
+
+  llvm::IntegerType *IntTy_jlong = CGF.Builder.getInt64Ty();
+  llvm::IntegerType *IntTy_jint = CGF.Builder.getInt32Ty();
+
+
+  // Initialize arguments
+  std::vector<llvm::Type*> FuncTy_args;
+
+  // Add compulsary arguments
+  FuncTy_args.push_back(PointerTy_1);
+  FuncTy_args.push_back(PointerTy_jobject);
+
+  for(auto it = InputsMap.begin(); it != InputsMap.end(); ++it) {
+    FuncTy_args.push_back(IntTy_jlong);
+  }
+
+  llvm::FunctionType* FnTy = llvm::FunctionType::get(
+        /*Result=*/IntTy_jlong,
+        /*Params=*/FuncTy_args,
+        /*isVarArg=*/false);
+
+  llvm::FoldingSetNodeID ExprID;
+  expression->Profile(ExprID, getContext(), true);
+
+  llvm::StringRef ReordFnName = llvm::StringRef("Java_org_llvm_openmp_OmpKernel_reorderMethod" + std::to_string(ExprID.ComputeHash()));
+
+  llvm::errs() << ReordFnName.str() << "\n";
+
+  llvm::Function *ReordFn =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage, ReordFnName, mod);
+
+  llvm::AttributeSet reord_PAL;
+  {
+    SmallVector<llvm::AttributeSet, 4> Attrs;
+    llvm::AttributeSet PAS;
+    {
+      llvm::AttrBuilder B;
+      B.addAttribute(llvm::Attribute::NoUnwind);
+      B.addAttribute(llvm::Attribute::StackProtect);
+      B.addAttribute(llvm::Attribute::UWTable);
+      PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+    }
+
+    Attrs.push_back(PAS);
+    reord_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
+  }
+  ReordFn->setAttributes(reord_PAL);
+
+  // Initialize a new CodeGenFunction used to generate the reduction
+
+  CGF.CurFn = ReordFn;
+  CGF.EnsureInsertPoint();
+
+  // Allocate, load and cast input variables (i.e. the arguments)
+  llvm::Function::arg_iterator args = ReordFn->arg_begin();
+  args++;
+  args++;
+
+  for (auto it = InputsMap.begin(); it != InputsMap.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+
+    //args->setName(VD->getName());
+    //llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(IntTy_jlong);
+    //llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
+    //llvm::LoadInst* load_arg = CGF.Builder.CreateLoad(alloca_arg, "");
+    llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
+    llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+    llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+
+    for(auto use = DefExprs.begin(); use != DefExprs.end(); use++)
+      CGM.OpenMPSupport.addOpenMPKernelArgVar(*use, alloca_cast);
+    args++;
+
+  }
+
+  llvm::Value* index = CGF.EmitScalarExpr(expression);
+  llvm::Value* res = CGF.Builder.CreateSExtOrBitCast(index, IntTy_jlong);
+  CGF.Builder.CreateRet(res);
+}
+
