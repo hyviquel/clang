@@ -4384,7 +4384,6 @@ llvm::Constant *CodeGenModule::GetAddrOfRTTIDescriptor(QualType Ty,
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type){
   unsigned id = getOffloadingMapCurrentIdentifier();
-  llvm::errs() << id << "\n";
   OpenMPStack.back().OffloadingMapDecls.push_back(DExpr);
   OpenMPStack.back().OffloadingMapBasePtrs.push_back(BasePtr);
   OpenMPStack.back().OffloadingMapPtrs.push_back(Ptr);

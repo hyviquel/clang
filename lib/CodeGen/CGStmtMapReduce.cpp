@@ -39,6 +39,8 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 
+#define VERBOSE 0
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -138,7 +140,7 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
 
   FindIndexingArguments(CodeGenFunction &CGF)
     : CGF(CGF), CGM(CGF.CGM) {
-    verbose = CGM.getCodeGenOpts().AsmVerbose;
+    verbose = VERBOSE;
     CurrArrayExpr = NULL;
   }
 
@@ -191,7 +193,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
   FindKernelArguments(CodeGenFunction &CGF)
     : CGF(CGF), CGM(CGF.CGM) {
-    verbose = CGM.getCodeGenOpts().AsmVerbose;
+    verbose = VERBOSE;
     CurrArrayExpr = NULL;
   }
 
@@ -228,7 +230,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
         if(verbose) llvm::errs() << "Require reordering\n";
-        CGM.OpenMPSupport.getReorderMap()[VD][RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
+        CGM.OpenMPSupport.getReorderMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
 
         //CurrArrayIndexExpr->Profile();
         //Finder.inputs;
@@ -253,6 +255,8 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 };
 
 void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const OMPExecutableDirective &S) {
+  bool verbose = VERBOSE;
+
   DefineJNITypes();
 
   // Create the mapping function
@@ -628,15 +632,17 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 
 
 void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
+  bool verbose = VERBOSE;
+
   DefineJNITypes();
 
 
   auto& typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   auto& indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
-  llvm::errs() << "Offloaded variables \n";
+  if(verbose) llvm::errs() << "Offloaded variables \n";
   for(auto iter = typeMap.begin(); iter!= typeMap.end(); ++iter) {
-    llvm::errs() << iter->first->getName() << " - " << iter->second << " - " << indexMap[iter->first] << "\n";
+    if(verbose) llvm::errs() << iter->first->getName() << " - " << iter->second << " - " << indexMap[iter->first] << "\n";
   }
 
   const Stmt *Body = S.getAssociatedStmt();
@@ -899,7 +905,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   CGF.EmitStmt(Body);
-  Body->dump();
+  if(verbose) Body->dump();
 
   auto ptrBarray = VecPtrBarrays.begin();
   auto ptrValue = VecPtrValues.begin();
@@ -1194,20 +1200,38 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 }
 
 void CodeGenFunction::GenerateReorderingKernels() {
+  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
 
-  for(auto it = ReorderMap.begin(); it != ReorderMap.end(); ++it) {
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      FindIndexingArguments Finder(*this);
-      Expr *expr = const_cast<Expr*>(it2->second);
-      Finder.TraverseStmt(expr);
-      VarDecl *var = nullptr;
-      GenerateReorderingKernel(it->first, Finder.InputsMap, it2->second);
+      if(const Expr* reorderExpr = ReorderMap[*it2]) {
+        FindIndexingArguments Finder(*this);
+        Expr *expr = const_cast<Expr*>(reorderExpr);
+        Finder.TraverseStmt(expr);
+        GenerateReorderingKernel(it->first, Finder.InputsMap, reorderExpr);
+      }
+    }
+  }
+
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      if(const Expr* reorderExpr = ReorderMap[*it2]) {
+        FindIndexingArguments Finder(*this);
+        Expr *expr = const_cast<Expr*>(reorderExpr);
+        Finder.TraverseStmt(expr);
+        GenerateReorderingKernel(it->first, Finder.InputsMap, reorderExpr);
+      }
     }
   }
 }
 
 void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression) {
+  bool verbose = VERBOSE;
+
   CodeGenFunction CGF(CGM, true);
   DefineJNITypes();
 
@@ -1247,7 +1271,7 @@ void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, llvm::DenseMap
 
   llvm::StringRef ReordFnName = llvm::StringRef("Java_org_llvm_openmp_OmpKernel_reorderMethod" + std::to_string(ExprID.ComputeHash()));
 
-  llvm::errs() << ReordFnName.str() << "\n";
+  if(verbose) llvm::errs() << ReordFnName.str() << "\n";
 
   llvm::Function *ReordFn =
       llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage, ReordFnName, mod);
