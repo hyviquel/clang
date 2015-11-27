@@ -39,7 +39,7 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 
-#define VERBOSE 0
+#define VERBOSE 1
 
 using namespace clang;
 using namespace CodeGen;
@@ -636,7 +636,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   DefineJNITypes();
 
-
+  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   auto& indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
@@ -697,9 +697,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   FuncTy_args.push_back(PointerTy_1);
   FuncTy_args.push_back(PointerTy_jobject);
 
-  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
-  {
-    FuncTy_args.push_back(PointerTy_jobject);
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      FuncTy_args.push_back(PointerTy_jobject);
+    }
   }
 
   llvm::FunctionType* FnTy = llvm::FunctionType::get(
@@ -854,54 +855,55 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::SmallVector<llvm::Value*, 8> VecPtrValues;
 
   // Allocate, load and cast input variables (i.e. the arguments)
-  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
-  {
-    const VarDecl *VD = it->first;
-    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      const VarDecl *VD = it->first;
+      llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
 
-    args->setName(VD->getName());
-    llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
+      args->setName(VD->getName());
+      llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
+      llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
 
-    llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
+      llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_4);
 
-    llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
-    std::vector<llvm::Value*> ptr_275_params;
-    ptr_275_params.push_back(ptr_273);
-    ptr_275_params.push_back(ptr_274);
-    ptr_275_params.push_back(const_ptr_256);
-    llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
-    ptr_275->setCallingConv(llvm::CallingConv::C);
-    ptr_275->setTailCall(false);
-    llvm::AttributeSet ptr_275_PAL;
-    ptr_275->setAttributes(ptr_275_PAL);
-    llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
+      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
+      std::vector<llvm::Value*> ptr_275_params;
+      ptr_275_params.push_back(ptr_273);
+      ptr_275_params.push_back(ptr_274);
+      ptr_275_params.push_back(const_ptr_256);
+      llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
+      ptr_275->setCallingConv(llvm::CallingConv::C);
+      ptr_275->setTailCall(false);
+      llvm::AttributeSet ptr_275_PAL;
+      ptr_275->setAttributes(ptr_275_PAL);
+      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
 
-    VecPtrBarrays.push_back(ptr_274);
-    VecPtrValues.push_back(ptr_275);
+      VecPtrBarrays.push_back(ptr_274);
+      VecPtrValues.push_back(ptr_275);
 
-    for(auto use = DefExprs.begin(); use != DefExprs.end(); use++)
-      CGM.OpenMPSupport.addOpenMPKernelArgVar(*use, ptr_265);
-    args++;
+
+      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, ptr_265);
+      args++;
+    }
   }
 
   // Allocate output variables
   for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
   {
-    const VarDecl *VD = it->first;
-    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      const VarDecl *VD = it->first;
 
-    // Find the type of one element
-    QualType varType = VD->getType();
-    while(varType->isAnyPointerType()) {
-      varType = varType->getPointeeType();
+      // Find the type of one element
+      QualType varType = VD->getType();
+      while(varType->isAnyPointerType()) {
+        varType = varType->getPointeeType();
+      }
+
+      llvm::Type *TyObject = ConvertType(varType);
+      llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject);
+
+      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_res);
     }
-
-    llvm::Type *TyObject = ConvertType(varType);
-    llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject);
-
-    for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
-      CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
   }
 
   CGF.EmitStmt(Body);
@@ -910,117 +912,121 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   auto ptrBarray = VecPtrBarrays.begin();
   auto ptrValue = VecPtrValues.begin();
 
-  for (auto it = CGM.OpenMPSupport.getOffloadingInputVarUse().begin(); it != CGM.OpenMPSupport.getOffloadingInputVarUse().end(); ++it)
-  {
-    const VarDecl *VD = it->first;
-    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      const VarDecl *VD = it->first;
+      llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
 
-    llvm::LoadInst* ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-    std::vector<llvm::Value*> ptr_270_indices;
-    ptr_270_indices.push_back(const_int64_252);
-    ptr_270_indices.push_back(const_int32_255);
-    llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_xx, 0, 192);
-    llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
+      llvm::LoadInst* ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
+      std::vector<llvm::Value*> ptr_270_indices;
+      ptr_270_indices.push_back(const_int64_252);
+      ptr_270_indices.push_back(const_int32_255);
+      llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_xx, 0, 192);
+      llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
 
-    std::vector<llvm::Value*> void_272_params;
-    void_272_params.push_back(ptr_env);
-    void_272_params.push_back(*ptrBarray);
-    void_272_params.push_back(*ptrValue);
-    void_272_params.push_back(const_int32_254);
-    llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
-    void_272->setCallingConv(llvm::CallingConv::C);
-    void_272->setTailCall(true);
-    llvm::AttributeSet void_272_PAL;
-    {
-      llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
-      llvm::AttributeSet PAS;
+      std::vector<llvm::Value*> void_272_params;
+      void_272_params.push_back(ptr_env);
+      void_272_params.push_back(*ptrBarray);
+      void_272_params.push_back(*ptrValue);
+      void_272_params.push_back(const_int32_254);
+      llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
+      void_272->setCallingConv(llvm::CallingConv::C);
+      void_272->setTailCall(true);
+      llvm::AttributeSet void_272_PAL;
       {
-        llvm::AttrBuilder B;
-        B.addAttribute(llvm::Attribute::NoUnwind);
-        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+        llvm::AttributeSet PAS;
+        {
+          llvm::AttrBuilder B;
+          B.addAttribute(llvm::Attribute::NoUnwind);
+          PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        }
+
+        Attrs.push_back(PAS);
+        void_272_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
       }
+      void_272->setAttributes(void_272_PAL);
 
-      Attrs.push_back(PAS);
-      void_272_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
-
+      ptrBarray++;
+      ptrValue++;
     }
-    void_272->setAttributes(void_272_PAL);
-
-    ptrBarray++;
-    ptrValue++;
   }
 
   llvm::SmallVector<llvm::Value*, 8> results;
 
   for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
   {
-    const VarDecl *VD = it->first;
-    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
-    llvm::Type *TyObject = ConvertType(VD->getType());
-    llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(DefExprs.front());
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      const VarDecl *VD = it->first;
+      llvm::Type *TyObject = ConvertType(VD->getType());
+      llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(*it2);
 
-    llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_4, "");
-    llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
-    llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
-    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
-    std::vector<llvm::Value*> ptr_277_params;
-    ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
-    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-    ptr_277->setCallingConv(llvm::CallingConv::C);
-    ptr_277->setTailCall(true);
-    llvm::AttributeSet ptr_277_PAL;
-    {
-      llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
-      llvm::AttributeSet PAS;
+      llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_4, "");
+      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
+      llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
+      llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
+      std::vector<llvm::Value*> ptr_277_params;
+      ptr_277_params.push_back(ptr_env);
+      ptr_277_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
+      llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+      ptr_277->setCallingConv(llvm::CallingConv::C);
+      ptr_277->setTailCall(true);
+      llvm::AttributeSet ptr_277_PAL;
       {
-        llvm::AttrBuilder B;
-        B.addAttribute(llvm::Attribute::NoUnwind);
-        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+        llvm::AttributeSet PAS;
+        {
+          llvm::AttrBuilder B;
+          B.addAttribute(llvm::Attribute::NoUnwind);
+          PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        }
+
+        Attrs.push_back(PAS);
+        ptr_277_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
       }
+      ptr_277->setAttributes(ptr_277_PAL);
 
-      Attrs.push_back(PAS);
-      ptr_277_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
-
-    }
-    ptr_277->setAttributes(ptr_277_PAL);
-
-    llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-    llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
-    llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-    std::vector<llvm::Value*> void_281_params;
-    void_281_params.push_back(ptr_env);
-    void_281_params.push_back(ptr_277);
-    void_281_params.push_back(const_int32_254);
-    void_281_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
-    void_281_params.push_back(ptr_273);
-    llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-    void_281->setCallingConv(llvm::CallingConv::C);
-    void_281->setTailCall(false);
-    llvm::AttributeSet void_281_PAL;
-    {
-      llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
-      llvm::AttributeSet PAS;
+      llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
+      llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
+      llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
+      std::vector<llvm::Value*> void_281_params;
+      void_281_params.push_back(ptr_env);
+      void_281_params.push_back(ptr_277);
+      void_281_params.push_back(const_int32_254);
+      void_281_params.push_back(const_int32_258); // TOFIX: That should the size in byte of the element
+      void_281_params.push_back(ptr_273);
+      llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
+      void_281->setCallingConv(llvm::CallingConv::C);
+      void_281->setTailCall(false);
+      llvm::AttributeSet void_281_PAL;
       {
-        llvm::AttrBuilder B;
-        B.addAttribute(llvm::Attribute::NoUnwind);
-        PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        llvm::SmallVector<llvm::AttributeSet, 4> Attrs;
+        llvm::AttributeSet PAS;
+        {
+          llvm::AttrBuilder B;
+          B.addAttribute(llvm::Attribute::NoUnwind);
+          PAS = llvm::AttributeSet::get(mod->getContext(), ~0U, B);
+        }
+
+        Attrs.push_back(PAS);
+        void_281_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+
       }
+      void_281->setAttributes(void_281_PAL);
 
-      Attrs.push_back(PAS);
-      void_281_PAL = llvm::AttributeSet::get(mod->getContext(), Attrs);
+      results.push_back(ptr_277);
+      //llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
 
+      //for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
+      //CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
     }
-    void_281->setAttributes(void_281_PAL);
-
-    results.push_back(ptr_277);
-    //llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
-
-    //for(auto def = DefExprs.begin(); def != DefExprs.end(); def++)
-    //CGM.OpenMPSupport.addOpenMPKernelArgVar(*def, alloca_res);
   }
 
-  unsigned NbOutputs = CGM.OpenMPSupport.getOffloadingOutputVarDef().size();
+  unsigned NbOutputs = 0;
+  for(auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
+    NbOutputs += it->second.size();
 
   if(NbOutputs == 1) {
     // Just return the value

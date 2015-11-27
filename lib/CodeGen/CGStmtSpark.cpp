@@ -86,13 +86,16 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   bool verbose = VERBOSE;
 
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
 
   unsigned NbInputs = 0;
-  // FIXME: For now, we always pass a version of inputs without reordering
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-    NbInputs += CGM.OpenMPSupport.getOffloadingInputReorderNb()[it->first] + 1;
+    NbInputs += it->second.size();
   // Outputs are reorder a posteriori
-  unsigned NbOutputs = CGM.OpenMPSupport.getOffloadingOutputVarDef().size();
+  unsigned NbOutputs = 0;
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+    NbOutputs += it->second.size();
 
   if(verbose) llvm::errs() << "NbInput => " << NbInputs << "\n";
   if(verbose) llvm::errs() << "NbOutput => " << NbOutputs << "\n";
@@ -138,9 +141,20 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
   }
 
-  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
-
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      if(const Expr* reorderExpr = ReorderMap[*it2]) {
+        llvm::FoldingSetNodeID ExprID;
+        reorderExpr->Profile(ExprID, getContext(), true);
+        SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
+        // TODO: Add multiple input
+        SPARK_FILE << ") : Long\n";
+      }
+    }
+  }
+
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
@@ -158,6 +172,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
 
@@ -195,20 +210,43 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id2 = 0;
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         llvm::FoldingSetNodeID ExprID;
         reorderExpr->Profile(ExprID, getContext(), true);
 
         if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
+          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
         }
         else {
           // TODO:
         }
 
-        SPARK_FILE << "    val input" << id << " = reorder" << id << ".join(arg" << id << ").map(_._2)\n";
+        SPARK_FILE << "    val input" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".join(arg" << id << ").map(_._2)\n";
       }
+      id2++;
+    }
+  }
+
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id2 = 0;
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      if(const Expr* reorderExpr = ReorderMap[*it2]) {
+        llvm::FoldingSetNodeID ExprID;
+        reorderExpr->Profile(ExprID, getContext(), true);
+
+        if(NbIndex == 1) {
+          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
+        }
+        else {
+          // TODO:
+        }
+
+        // SPARK_FILE << "    val input" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".join(arg" << id << ").map(_._2)\n";
+      }
+      id2++;
     }
   }
 
@@ -220,16 +258,19 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
     int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id2 = 0;
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(i!=0) SPARK_FILE << ".join(";
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        SPARK_FILE << "input" << id;
+        SPARK_FILE << "input" << id << "_" << id2;
       }
       else {
         SPARK_FILE << "arg" << id;
       }
       if(i!=0) SPARK_FILE << ")";
+      if(i>1) SPARK_FILE << ".map{case (k, ((x, y), z)) => (k, (x, y, z))}";
       i++;
+      id2++;
     }
   }
   SPARK_FILE << "\n\n";
@@ -238,40 +279,51 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
-  unsigned NbInputs = InputVarUse.size();
+
+  unsigned NbInputs = 0;
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+    NbInputs += it->second.size();
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
     SPARK_FILE << "    var mapres = mapargs.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
   else {
     SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(x._1";
-    for(unsigned i = 2; i<=NbInputs; i++)
-      SPARK_FILE << ", x._" << i;
+    for(unsigned i = 1; i<NbInputs; ++i)
+      SPARK_FILE << ", x._" << i+1;
     SPARK_FILE << ") }\n\n";
   }
 }
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
-  auto& OutputVarUse = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+
+  unsigned NbOutputs = 0;
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+    NbOutputs += it->second.size();
 
   SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
   int i=0;
 
-  for (auto it = OutputVarUse.begin(); it != OutputVarUse.end(); ++it)
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
   {
-      int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
-      bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
-      if(OutputVarUse.size() == 1) {
+    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id2 = 0;
+    bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
+
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      if(NbOutputs == 1) {
         // 1 output -> return the result directly
         SPARK_FILE << "    val res" << id << " = mapres";
       }
-      else if(OutputVarUse.size() == 2 || OutputVarUse.size() == 3) {
+      else if(NbOutputs == 2 || NbOutputs == 3) {
         // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-        SPARK_FILE << "    val res" << id << " = mapres.mapValues { x => x._" << i+1 << "}";
+        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x._" << i+1 << "}";
       }
       else {
         // More than 3 outputs -> extract each variable from the Collection
-        SPARK_FILE << "    val res" << id << " = mapres.mapValues { x => x(" << i << ") }";
+        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x(" << i << ") }";
       }
 
       if(isReduced)
@@ -279,8 +331,28 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
       else
         SPARK_FILE << "\n";
 
-      SPARK_FILE << "    info.indexedWrite(" << id << ", res" << id << ")\n";
-      i++;
+      if(const Expr* reorderExpr = ReorderMap[*it2]) {
+        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".join(res" << id << "_" << id2 << ").map(_._2)\n";
+      } else {
+        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = res" << id << "_" << id2 << "\n";
+      }
+
+      id2++;
+    }
+
+    SPARK_FILE << "    val output" << id << " = ";
+    std::string sep1, sep2 = "";
+    id2 = 0;
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+       SPARK_FILE << sep1 << "ordered_arg" << id << "_" << id2 << sep2;
+       sep1 = ".++(";
+       sep2 = ")";
+       id2++;
+    }
+    SPARK_FILE << "\n";
+
+    SPARK_FILE << "    info.indexedWrite(" << id << ", output" << id << ")\n";
+    i++;
   }
 
 }
