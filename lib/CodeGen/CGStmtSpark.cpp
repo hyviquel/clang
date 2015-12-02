@@ -150,6 +150,16 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
         SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
         // TODO: Add multiple input
         SPARK_FILE << ") : Long\n";
+
+        SPARK_FILE << "  def reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
+        // TODO: Add multiple input
+        SPARK_FILE << ") : Long";
+        SPARK_FILE << " = {\n";
+        SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+        SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
+        // TODO: Add multiple input
+        SPARK_FILE << ")\n";
+        SPARK_FILE << "  }\n\n";
       }
     }
   }
@@ -163,6 +173,16 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
         SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
         // TODO: Add multiple input
         SPARK_FILE << ") : Long\n";
+
+        SPARK_FILE << "  def reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
+        // TODO: Add multiple input
+        SPARK_FILE << ") : Long";
+        SPARK_FILE << " = {\n";
+        SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+        SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
+        // TODO: Add multiple input
+        SPARK_FILE << ")\n";
+        SPARK_FILE << "  }\n\n";
       }
     }
   }
@@ -217,7 +237,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
         reorderExpr->Profile(ExprID, getContext(), true);
 
         if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
+          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
         }
         else {
           // TODO:
@@ -238,7 +258,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
         reorderExpr->Profile(ExprID, getContext(), true);
 
         if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
+          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
         }
         else {
           // TODO:
