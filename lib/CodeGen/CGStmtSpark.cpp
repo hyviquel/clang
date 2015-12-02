@@ -315,7 +315,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(NbOutputs == 1) {
         // 1 output -> return the result directly
-        SPARK_FILE << "    val res" << id << " = mapres";
+        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres";
       }
       else if(NbOutputs == 2 || NbOutputs == 3) {
         // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
