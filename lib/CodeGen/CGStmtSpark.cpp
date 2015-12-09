@@ -195,14 +195,16 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
 
     // Find the bit size of one element
     QualType varType = it->first->getType();
+
     while(varType->isAnyPointerType()) {
       varType = varType->getPointeeType();
     }
@@ -229,7 +231,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     int id2 = 0;
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
@@ -250,7 +252,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   }
 
   for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     int id2 = 0;
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
@@ -277,7 +279,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   int i=0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     int id2 = 0;
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(i!=0) SPARK_FILE << ".join(";
@@ -318,6 +320,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
   unsigned NbOutputs = 0;
   for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
@@ -328,7 +331,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
 
   for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
   {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     int id2 = 0;
     bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
 
