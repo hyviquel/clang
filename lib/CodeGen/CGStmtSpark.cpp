@@ -260,7 +260,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
         reorderExpr->Profile(ExprID, getContext(), true);
 
         if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}.map{case (x,y) => (y,x)}\n";
+          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
         }
         else {
           // TODO:
