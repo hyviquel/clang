@@ -400,7 +400,7 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
             << "\n"
             << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.5.0\" % \"provided\"\n"
             << "\n"
-            << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.1.0-SNAPSHOT\" intransitive()\n";
+            << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.1.0-SNAPSHOT\"\n";
 
   llvm::SmallString<128> Path("project");
   llvm::sys::fs::create_directory(Path);
