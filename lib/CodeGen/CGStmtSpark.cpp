@@ -374,7 +374,15 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     SPARK_FILE << "\n";
 
-    SPARK_FILE << "    info.indexedWrite(" << id << ", output" << id << ")\n";
+    // Find the bit size of one element
+    QualType varType = it->first->getType();
+
+    while(varType->isAnyPointerType()) {
+      varType = varType->getPointeeType();
+    }
+    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
+
+    SPARK_FILE << "    info.indexedWrite(" << id << ", " << SizeInByte << ", output" << id << ")\n";
     i++;
   }
 
