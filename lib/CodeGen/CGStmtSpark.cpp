@@ -67,7 +67,7 @@ void CodeGenFunction::EmitSparkJob() {
 
   SPARK_FILE << "  def main(args: Array[String]) {\n"
              << "    \n"
-             << "    val info = new CloudInfo(args(0), args(1), args(2))\n"
+             << "    val info = new CloudInfo(args(0), args(1), args(2), args(3))\n"
              << "    \n";
 
   EmitSparkInput(SPARK_FILE);
@@ -128,7 +128,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   else
     SPARK_FILE << "Seq[Array[Byte]]";
   SPARK_FILE << " = {\n";
-  SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+  SPARK_FILE << "    NativeKernels.loadOnce()\n";
   SPARK_FILE << "    return mappingMethod(n0";
   for(unsigned i = 1; i<NbInputs; i++)
     SPARK_FILE << ", n" << i;
@@ -155,7 +155,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
         // TODO: Add multiple input
         SPARK_FILE << ") : Long";
         SPARK_FILE << " = {\n";
-        SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+        SPARK_FILE << "    NativeKernels.loadOnce()\n";
         SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
         // TODO: Add multiple input
         SPARK_FILE << ")\n";
@@ -178,7 +178,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
         // TODO: Add multiple input
         SPARK_FILE << ") : Long";
         SPARK_FILE << " = {\n";
-        SPARK_FILE << "    System.load(SparkFiles.get(\"libmr.so\"))\n";
+        SPARK_FILE << "    NativeKernels.loadOnce()\n";
         SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
         // TODO: Add multiple input
         SPARK_FILE << ")\n";
@@ -196,6 +196,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -214,12 +215,31 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
                << " // Variable " << it->first->getName() <<"\n";
   }
 
-  int NbIndex = 1;
+  for (auto it = CntMap.begin(); it != CntMap.end(); ++it)
+  {
+    const VarDecl *VarCnt = it->first;
+    const Expr *Init = it->second[0];
+    const Expr *Check = it->second[1];
+    const Expr *Step = it->second[2];
 
-  for(int i=0; i<NbIndex; i++) {
-    SPARK_FILE << "    val index" << i << " = info.sc.parallelize(0.toLong to 100000)";
-    SPARK_FILE << "// Variable ??\n";
+    llvm::APSInt initValue, checkValue, stepValue;
+
+    bool isInitEvaluable = Init->EvaluateAsInt(initValue, getContext());
+    bool isCheckEvaluable = Check->EvaluateAsInt(checkValue, getContext());
+    bool isStepEvaluable = Step->EvaluateAsInt(stepValue, getContext());
+
+    if(!isInitEvaluable || !isCheckEvaluable || !isStepEvaluable) {
+      llvm::errs()  << "Cannot fully detect its scope statically:\n"
+                    << "Require the generation of native kernels to compute it during the execution.\n";
+    } else {
+      llvm::errs() << "From " << initValue.getSExtValue() << " until " << checkValue.getSExtValue() << " with step " << stepValue.getSExtValue() << "\n";
+    }
+
+    SPARK_FILE << "    val index0 = info.sc.parallelize(" << initValue.getSExtValue() << ".toLong to " << checkValue.getSExtValue() << " by " << stepValue.getSExtValue() << ")";
+    SPARK_FILE << " // Variable " << VarCnt->getName() << "\n";
+
   }
+  int NbIndex = 1;
 
   SPARK_FILE << "    val index = index0";
   for(int i=1; i<NbIndex; i++) {
