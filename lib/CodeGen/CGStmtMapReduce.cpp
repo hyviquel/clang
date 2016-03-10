@@ -38,11 +38,447 @@
 #include "llvm/IR/CallSite.h"
 
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/StmtVisitor.h"
 
 #define VERBOSE 1
 
 using namespace clang;
 using namespace CodeGen;
+
+Expr *CodeGenFunction::ActOnIntegerConstant(SourceLocation Loc, uint64_t Val) {
+  unsigned IntSize = getContext().getTargetInfo().getIntWidth();
+  return IntegerLiteral::Create(getContext(), llvm::APInt(IntSize, Val),
+                                getContext().IntTy, Loc);
+}
+
+
+namespace {
+class ForInitChecker : public StmtVisitor<ForInitChecker, Decl *> {
+  class ForInitVarChecker : public StmtVisitor<ForInitVarChecker, Decl *> {
+  public:
+    VarDecl *VisitDeclRefExpr(DeclRefExpr *E) {
+      return dyn_cast_or_null<VarDecl>(E->getDecl());
+    }
+    Decl *VisitStmt(Stmt *S) { return 0; }
+    ForInitVarChecker() {}
+  } VarChecker;
+  Expr *InitValue;
+
+public:
+  Decl *VisitBinaryOperator(BinaryOperator *BO) {
+    if (BO->getOpcode() != BO_Assign)
+      return 0;
+
+    InitValue = BO->getRHS();
+    return VarChecker.Visit(BO->getLHS());
+  }
+  Decl *VisitDeclStmt(DeclStmt *S) {
+    if (S->isSingleDecl()) {
+      VarDecl *Var = dyn_cast_or_null<VarDecl>(S->getSingleDecl());
+      if (Var && Var->hasInit()) {
+        if (CXXConstructExpr *Init =
+                dyn_cast<CXXConstructExpr>(Var->getInit())) {
+          if (Init->getNumArgs() != 1)
+            return 0;
+          InitValue = Init->getArg(0);
+        } else {
+          InitValue = Var->getInit();
+        }
+        return Var;
+      }
+    }
+    return 0;
+  }
+  Decl *VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+    switch (E->getOperator()) {
+    case OO_Equal:
+      InitValue = E->getArg(1);
+      return VarChecker.Visit(E->getArg(0));
+    default:
+      break;
+    }
+    return 0;
+  }
+  Decl *VisitStmt(Stmt *S) { return 0; }
+  ForInitChecker() : VarChecker(), InitValue(0) {}
+  Expr *getInitValue() { return InitValue; }
+};
+
+class ForVarChecker : public StmtVisitor<ForVarChecker, bool> {
+  Decl *InitVar;
+
+public:
+  bool VisitDeclRefExpr(DeclRefExpr *E) { return E->getDecl() == InitVar; }
+  bool VisitImplicitCastExpr(ImplicitCastExpr *E) {
+    return Visit(E->getSubExpr());
+  }
+  bool VisitStmt(Stmt *S) { return false; }
+  ForVarChecker(Decl *D) : InitVar(D) {}
+};
+
+class ForTestChecker : public StmtVisitor<ForTestChecker, bool> {
+  ForVarChecker VarChecker;
+  Expr *CheckValue;
+  bool IsLessOp;
+  bool IsStrictOp;
+
+public:
+  bool VisitBinaryOperator(BinaryOperator *BO) {
+    if (!BO->isRelationalOp())
+      return false;
+    if (VarChecker.Visit(BO->getLHS())) {
+      CheckValue = BO->getRHS();
+      IsLessOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_LE;
+      IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
+    } else if (VarChecker.Visit(BO->getRHS())) {
+      CheckValue = BO->getLHS();
+      IsLessOp = BO->getOpcode() == BO_GT || BO->getOpcode() == BO_GE;
+      IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
+    }
+    return CheckValue != 0;
+  }
+  bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+    switch (E->getOperator()) {
+    case OO_Greater:
+    case OO_GreaterEqual:
+    case OO_Less:
+    case OO_LessEqual:
+      break;
+    default:
+      return false;
+    }
+    if (E->getNumArgs() != 2)
+      return false;
+
+    if (VarChecker.Visit(E->getArg(0))) {
+      CheckValue = E->getArg(1);
+      IsLessOp =
+          E->getOperator() == OO_Less || E->getOperator() == OO_LessEqual;
+      IsStrictOp = E->getOperator() == OO_Less;
+    } else if (VarChecker.Visit(E->getArg(1))) {
+      CheckValue = E->getArg(0);
+      IsLessOp =
+          E->getOperator() == OO_Greater || E->getOperator() == OO_GreaterEqual;
+      IsStrictOp = E->getOperator() == OO_Greater;
+    }
+
+    return CheckValue != 0;
+  }
+  bool VisitStmt(Stmt *S) { return false; }
+  ForTestChecker(Decl *D)
+      : VarChecker(D), CheckValue(0), IsLessOp(false), IsStrictOp(false) {}
+  Expr *getCheckValue() { return CheckValue; }
+  bool isLessOp() const { return IsLessOp; }
+  bool isStrictOp() const { return IsStrictOp; }
+};
+
+class ForIncrChecker : public StmtVisitor<ForIncrChecker, bool> {
+  ForVarChecker VarChecker;
+  class ForIncrExprChecker : public StmtVisitor<ForIncrExprChecker, bool> {
+    ForVarChecker VarChecker;
+    Expr *StepValue;
+    bool IsIncrement;
+
+  public:
+    bool VisitBinaryOperator(BinaryOperator *BO) {
+      if (!BO->isAdditiveOp())
+        return false;
+      if (BO->getOpcode() == BO_Add) {
+        IsIncrement = true;
+        if (VarChecker.Visit(BO->getLHS()))
+          StepValue = BO->getRHS();
+        else if (VarChecker.Visit(BO->getRHS()))
+          StepValue = BO->getLHS();
+        return StepValue != 0;
+      }
+      // BO_Sub
+      if (VarChecker.Visit(BO->getLHS()))
+        StepValue = BO->getRHS();
+      return StepValue != 0;
+    }
+    bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+      switch (E->getOperator()) {
+      case OO_Plus:
+        IsIncrement = true;
+        if (VarChecker.Visit(E->getArg(0)))
+          StepValue = E->getArg(1);
+        else if (VarChecker.Visit(E->getArg(1)))
+          StepValue = E->getArg(0);
+        return StepValue != 0;
+      case OO_Minus:
+        if (VarChecker.Visit(E->getArg(0)))
+          StepValue = E->getArg(1);
+        return StepValue != 0;
+      default:
+        return false;
+      }
+    }
+    bool VisitStmt(Stmt *S) { return false; }
+    ForIncrExprChecker(ForVarChecker &C)
+        : VarChecker(C), StepValue(0), IsIncrement(false) {}
+    Expr *getStepValue() { return StepValue; }
+    bool isIncrement() const { return IsIncrement; }
+  } ExprChecker;
+  Expr *StepValue;
+  CodeGenFunction &Actions;
+  bool IsLessOp, IsCompatibleWithTest;
+
+public:
+  bool VisitUnaryOperator(UnaryOperator *UO) {
+    if (!UO->isIncrementDecrementOp())
+      return false;
+    if (VarChecker.Visit(UO->getSubExpr())) {
+      IsCompatibleWithTest = (IsLessOp && UO->isIncrementOp()) ||
+                             (!IsLessOp && UO->isDecrementOp());
+      if (!IsCompatibleWithTest && IsLessOp)
+        StepValue = Actions.ActOnIntegerConstant(SourceLocation(), -1);
+      else
+        StepValue = Actions.ActOnIntegerConstant(SourceLocation(), 1);
+    }
+    return StepValue != 0;
+  }
+  bool VisitBinaryOperator(BinaryOperator *BO) {
+    IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
+                           (!IsLessOp && BO->getOpcode() == BO_SubAssign);
+    switch (BO->getOpcode()) {
+    case BO_AddAssign:
+    case BO_SubAssign:
+      if (VarChecker.Visit(BO->getLHS())) {
+        StepValue = BO->getRHS();
+        IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
+                               (!IsLessOp && BO->getOpcode() == BO_SubAssign);
+      }
+      return StepValue != 0;
+    case BO_Assign:
+      if (VarChecker.Visit(BO->getLHS()) && ExprChecker.Visit(BO->getRHS())) {
+        StepValue = ExprChecker.getStepValue();
+        IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
+      }
+      return StepValue != 0;
+    default:
+      break;
+    }
+    return false;
+  }
+  bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+    switch (E->getOperator()) {
+    case OO_PlusPlus:
+    case OO_MinusMinus:
+      if (VarChecker.Visit(E->getArg(0))) {
+        IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusPlus) ||
+                               (!IsLessOp && E->getOperator() == OO_MinusMinus);
+        if (!IsCompatibleWithTest && IsLessOp)
+          StepValue = Actions.ActOnIntegerConstant(SourceLocation(), -1);
+        else
+          StepValue = Actions.ActOnIntegerConstant(SourceLocation(), 1);
+      }
+      return StepValue != 0;
+    case OO_PlusEqual:
+    case OO_MinusEqual:
+      if (VarChecker.Visit(E->getArg(0))) {
+        StepValue = E->getArg(1);
+        IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusEqual) ||
+                               (!IsLessOp && E->getOperator() == OO_MinusEqual);
+      }
+      return StepValue != 0;
+    case OO_Equal:
+      if (VarChecker.Visit(E->getArg(0)) && ExprChecker.Visit(E->getArg(1))) {
+        StepValue = ExprChecker.getStepValue();
+        IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
+      }
+      return StepValue != 0;
+    default:
+      break;
+    }
+    return false;
+  }
+  bool VisitStmt(Stmt *S) { return false; }
+  ForIncrChecker(Decl *D, CodeGenFunction &S, bool LessOp)
+      : VarChecker(D), ExprChecker(VarChecker), StepValue(0), Actions(S),
+        IsLessOp(LessOp), IsCompatibleWithTest(false) {}
+  Expr *getStepValue() { return StepValue; }
+  bool isCompatibleWithTest() const { return IsCompatibleWithTest; }
+};
+}
+
+bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
+                                        Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
+                                        BinaryOperatorKind &OpKind) {
+  // assert(S && "non-null statement must be specified");
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  for (init-expr; test-expr; incr-expr) structured-block
+  OpKind = BO_Assign;
+  ForStmt *For = dyn_cast_or_null<ForStmt>(S);
+  if (!For) {
+//    Diag(S->getLocStart(), diag::err_omp_not_for)
+//        << getOpenMPDirectiveName(Kind);
+    return true;
+  }
+  Stmt *Body = For->getBody();
+  if (!Body) {
+//    Diag(S->getLocStart(), diag::err_omp_directive_nonblock)
+//        << getOpenMPDirectiveName(Kind);
+    return true;
+  }
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  init-expr One of the following:
+  //  var = lb
+  //  integer-type var = lb
+  //  random-access-iterator-type var = lb
+  //  pointer-type var = lb
+  ForInitChecker InitChecker;
+  Stmt *Init = For->getInit();
+  VarDecl *Var;
+  if (!Init || !(Var = dyn_cast_or_null<VarDecl>(InitChecker.Visit(Init)))) {
+//    Diag(Init ? Init->getLocStart() : For->getForLoc(),
+//         diag::err_omp_not_canonical_for)
+//        << 0;
+    return true;
+  }
+  SourceLocation InitLoc = Init->getLocStart();
+
+  // OpenMP [2.11.1.1, Data-sharing Attribute Rules for Variables Referenced
+  // in a Construct, C/C++]
+  // The loop iteration variable(s) in the associated for-loop(s) of a for or
+  // parallel for construct may be listed in a private or lastprivate clause.
+  bool HasErrors = false;
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  // Var One of the following
+  // A variable of signed or unsigned integer type
+  // For C++, a variable of a random access iterator type.
+  // For C, a variable of a pointer type.
+  QualType Type = Var->getType()
+                      .getNonReferenceType()
+                      .getCanonicalType()
+                      .getUnqualifiedType();
+  if (!Type->isIntegerType() && !Type->isPointerType() &&
+      (!getLangOpts().CPlusPlus || !Type->isOverloadableType())) {
+//    Diag(Init->getLocStart(), diag::err_omp_for_variable)
+//        << getLangOpts().CPlusPlus;
+    HasErrors = true;
+  }
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  test-expr One of the following:
+  //  var relational-op b
+  //  b relational-op var
+  ForTestChecker TestChecker(Var);
+  Stmt *Cond = For->getCond();
+  bool TestCheckCorrect = false;
+  if (!Cond || !(TestCheckCorrect = TestChecker.Visit(Cond))) {
+//    Diag(Cond ? Cond->getLocStart() : For->getForLoc(),
+//         diag::err_omp_not_canonical_for)
+//        << 1;
+    HasErrors = true;
+  }
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  incr-expr One of the following:
+  //  ++var
+  //  var++
+  //  --var
+  //  var--
+  //  var += incr
+  //  var -= incr
+  //  var = var + incr
+  //  var = incr + var
+  //  var = var - incr
+  ForIncrChecker IncrChecker(Var, *this, TestChecker.isLessOp());
+  Stmt *Incr = For->getInc();
+  bool IncrCheckCorrect = false;
+  if (!Incr || !(IncrCheckCorrect = IncrChecker.Visit(Incr))) {
+//    Diag(Incr ? Incr->getLocStart() : For->getForLoc(),
+//         diag::err_omp_not_canonical_for)
+//        << 2;
+    HasErrors = true;
+  }
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  lb and b Loop invariant expressions of a type compatible with the type
+  //  of var.
+  Expr *InitValue = InitChecker.getInitValue();
+  //  QualType InitTy =
+  //    InitValue ? InitValue->getType().getNonReferenceType().
+  //                                  getCanonicalType().getUnqualifiedType() :
+  //                QualType();
+  //  if (InitValue &&
+  //      Context.mergeTypes(Type, InitTy, false, true).isNull()) {
+  //    Diag(InitValue->getExprLoc(), diag::err_omp_for_type_not_compatible)
+  //      << InitValue->getType()
+  //      << Var << Var->getType();
+  //    HasErrors = true;
+  //  }
+  Expr *CheckValue = TestChecker.getCheckValue();
+  //  QualType CheckTy =
+  //    CheckValue ? CheckValue->getType().getNonReferenceType().
+  //                                  getCanonicalType().getUnqualifiedType() :
+  //                 QualType();
+  //  if (CheckValue &&
+  //      Context.mergeTypes(Type, CheckTy, false, true).isNull()) {
+  //    Diag(CheckValue->getExprLoc(), diag::err_omp_for_type_not_compatible)
+  //      << CheckValue->getType()
+  //      << Var << Var->getType();
+  //    HasErrors = true;
+  //  }
+
+  // OpenMP [2.9.5, Canonical Loop Form]
+  //  incr A loop invariant integer expression.
+  Expr *Step = IncrChecker.getStepValue();
+  if (Step && !Step->getType()->isIntegralOrEnumerationType()) {
+//    Diag(Step->getExprLoc(), diag::err_omp_for_incr_not_integer);
+    HasErrors = true;
+  }
+
+  // OpenMP [2.9.5, Canonical Loop Form, Restrictions]
+  //  If test-expr is of form var relational-op b and relational-op is < or
+  //  <= then incr-expr must cause var to increase on each iteration of the
+  //  loop. If test-expr is of form var relational-op b and relational-op is
+  //  > or >= then incr-expr must cause var to decrease on each iteration of the
+  //  loop.
+  //  If test-expr is of form b relational-op var and relational-op is < or
+  //  <= then incr-expr must cause var to decrease on each iteration of the
+  //  loop. If test-expr is of form b relational-op var and relational-op is
+  //  > or >= then incr-expr must cause var to increase on each iteration of the
+  //  loop.
+  if (Incr && TestCheckCorrect && IncrCheckCorrect &&
+      !IncrChecker.isCompatibleWithTest()) {
+    // Additional type checking.
+    llvm::APSInt Result;
+    bool IsConst = Step->isIntegerConstantExpr(Result, getContext());
+    bool IsConstNeg = IsConst && Result.isSigned() && Result.isNegative();
+    bool IsSigned = Step->getType()->hasSignedIntegerRepresentation();
+    if ((TestChecker.isLessOp() && IsConst && IsConstNeg) ||
+        (!TestChecker.isLessOp() &&
+         ((IsConst && !IsConstNeg) || (!IsConst && !IsSigned)))) {
+//      Diag(Incr->getLocStart(), diag::err_omp_for_incr_not_compatible)
+//          << Var << TestChecker.isLessOp();
+      HasErrors = true;
+    } else {
+      // TODO: Negative increment
+      //Step = CreateBuiltinUnaryOp(Step->getExprLoc(), UO_Minus, Step);
+    }
+  }
+  if (HasErrors)
+    return true;
+
+  assert(Step && "Null expr in Step in OMP FOR");
+  Step = Step->IgnoreParenImpCasts();
+  CheckValue = CheckValue->IgnoreParenImpCasts();
+  InitValue = InitValue->IgnoreParenImpCasts();
+
+  if (TestChecker.isStrictOp()) {
+    Diff = BuildBinOp(DSAStack->getCurScope(), InitLoc, BO_Sub, CheckValue,
+                      ActOnIntegerConstant(SourceLocation(), 1));
+  }
+
+  InitVal = InitValue;
+  CheckVal = CheckValue;
+  StepVal = Step;
+  VarCnt = Var;
+
+}
 
 
 void CodeGenFunction::GenArgumentElementSize(const VarDecl *VD) {
@@ -634,6 +1070,9 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   bool verbose = VERBOSE;
 
+  const OMPParallelForDirective &ForDirective = cast<OMPParallelForDirective>(S);
+
+
   DefineJNITypes();
 
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
@@ -649,25 +1088,47 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   if (const CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
     Body = CS->getCapturedStmt();
-  //for (unsigned I = 0; I < getCollapsedNumberFromLoopDirective(&S); ++I) {
-  bool SkippedContainers = false;
-  while (!SkippedContainers) {
-    if (const AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
-      Body = AS->getSubStmt();
-    else if (const CompoundStmt *CS =
-             dyn_cast_or_null<CompoundStmt>(Body)) {
-      if (CS->size() != 1) {
+
+  for (unsigned I = 0; I < ForDirective.getCollapsedNumber(); ++I) {
+    bool SkippedContainers = false;
+    while (!SkippedContainers) {
+      if (const AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
+        Body = AS->getSubStmt();
+      else if (const CompoundStmt *CS =
+               dyn_cast_or_null<CompoundStmt>(Body)) {
+        if (CS->size() != 1) {
+          SkippedContainers = true;
+        } else {
+          Body = CS->body_back();
+        }
+      } else
         SkippedContainers = true;
-      } else {
-        Body = CS->body_back();
-      }
-    } else
-      SkippedContainers = true;
+    }
+    const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
+
+    Stmt *Test = const_cast<Stmt*>(Body);
+
+    // Detect info of the loop counter
+
+    Expr *Step;
+    Expr *Check;
+    Expr *Init;
+    VarDecl *VarCnt;
+    BinaryOperatorKind OpKind;
+
+    isNotSupportedLoopForm(Test, S.getDirectiveKind(), Init, Step, Check, VarCnt, OpKind);
+
+    if(verbose) llvm::errs() << "Find counter " << VarCnt->getName() << "\n";
+
+    auto& CntInfo = CGM.OpenMPSupport.getOffloadingCounterInfo()[VarCnt];
+    CntInfo.push_back(Init);
+    CntInfo.push_back(Check);
+    CntInfo.push_back(Step);
+
+
+
+    Body = For->getBody();
   }
-  const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
-  Body = For->getBody();
-
-
 
   // Detect input/output expression from the loop body
   Stmt *Body2 = const_cast<Stmt*>(Body);

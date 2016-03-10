@@ -2224,6 +2224,10 @@ public:
   bool IsCombinedDirectiveLoopBoundCapture(const OMPExecutableDirective &S,
                                            const DeclRefExpr *DE);
 
+  Expr *ActOnIntegerConstant(SourceLocation Loc, uint64_t Val);
+  bool isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
+                                          Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
+                                          BinaryOperatorKind &OpKind);
   void DefineJNITypes();
   void GenArgumentElementSize(const VarDecl *VD);
   void GenerateMappingKernel(const OMPExecutableDirective &S);
