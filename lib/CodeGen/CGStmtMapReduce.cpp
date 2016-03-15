@@ -1670,9 +1670,10 @@ void CodeGenFunction::GenerateReorderingKernels() {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         FindIndexingArguments Finder(*this);
@@ -1684,7 +1685,7 @@ void CodeGenFunction::GenerateReorderingKernels() {
   }
 
   for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         FindIndexingArguments Finder(*this);

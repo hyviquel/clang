@@ -4012,7 +4012,7 @@ CodeGenModule::OpenMPSupportStackTy::getReductionRecVar(CodeGenFunction &CGF) {
 }
 
 llvm::DenseMap<const VarDecl *, unsigned>
-CodeGenModule::OpenMPSupportStackTy::getReductionMap() {
+&CodeGenModule::OpenMPSupportStackTy::getReductionMap() {
   return OpenMPStack.back().ReductionMap;
 }
 

@@ -1414,7 +1414,7 @@ public:
     void setLastIterVar(llvm::Value *Var);
     unsigned getReductionVarIdx(const VarDecl *VD);
     bool isReduced(const VarDecl *VD);
-    llvm::DenseMap<const VarDecl *, unsigned> getReductionMap();
+    llvm::DenseMap<const VarDecl *, unsigned> &getReductionMap();
     unsigned getNumberOfReductionVars();
     void setNoWait(bool Flag);
     bool getNoWait();

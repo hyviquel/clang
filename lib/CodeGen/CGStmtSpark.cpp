@@ -88,6 +88,8 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto& reductionMap = CGM.OpenMPSupport.getReductionMap();
 
   unsigned NbInputs = 0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -135,14 +137,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << ")\n";
   SPARK_FILE << "  }\n\n";
 
-  llvm::DenseMap<const VarDecl *, unsigned> reductionMap = CGM.OpenMPSupport.getReductionMap();
-
   for(auto it = reductionMap.begin(); it != reductionMap.end(); ++it) {
     SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
   }
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         llvm::FoldingSetNodeID ExprID;
@@ -165,7 +165,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   }
 
   for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex()[it->first];
+    int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         llvm::FoldingSetNodeID ExprID;
