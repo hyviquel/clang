@@ -569,13 +569,13 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
   CodeGenModule &CGM;
   bool verbose;
 
-  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*,8>> InputsMap;
+  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*,8>> &InputsMap;
 
   ArraySubscriptExpr *CurrArrayExpr;
   Expr *CurrArrayIndexExpr;
 
-  FindIndexingArguments(CodeGenFunction &CGF)
-    : CGF(CGF), CGM(CGF.CGM) {
+  FindIndexingArguments(CodeGenFunction &CGF, unsigned hash)
+    : CGF(CGF), CGM(CGF.CGM), InputsMap(CGM.OpenMPSupport.getReorderInputVarUse()[hash]) {
     verbose = VERBOSE;
     CurrArrayExpr = NULL;
   }
@@ -1135,10 +1135,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   FindKernelArguments Finder(*this);
   Finder.TraverseStmt(Body2);
 
-  EmitSparkJob();
-
 
   GenerateReorderingKernels();
+
+  EmitSparkJob();
 
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
@@ -1671,15 +1671,22 @@ void CodeGenFunction::GenerateReorderingKernels() {
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
     int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        FindIndexingArguments Finder(*this);
-        Expr *expr = const_cast<Expr*>(reorderExpr);
-        Finder.TraverseStmt(expr);
-        GenerateReorderingKernel(it->first, Finder.InputsMap, reorderExpr);
+        llvm::FoldingSetNodeID ExprID;
+        reorderExpr->Profile(ExprID, getContext(), true);
+        unsigned hash = ExprID.ComputeHash();
+
+        if(ReorderInputVarUse.find(hash) == ReorderInputVarUse.end()) {
+          FindIndexingArguments Finder(*this, hash);
+          Expr *expr = const_cast<Expr*>(reorderExpr);
+          Finder.TraverseStmt(expr);
+          GenerateReorderingKernel(it->first, reorderExpr);
+        }
       }
     }
   }
@@ -1688,17 +1695,28 @@ void CodeGenFunction::GenerateReorderingKernels() {
     int id = IndexMap[it->first];
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        FindIndexingArguments Finder(*this);
-        Expr *expr = const_cast<Expr*>(reorderExpr);
-        Finder.TraverseStmt(expr);
-        GenerateReorderingKernel(it->first, Finder.InputsMap, reorderExpr);
+        llvm::FoldingSetNodeID ExprID;
+        reorderExpr->Profile(ExprID, getContext(), true);
+        unsigned hash = ExprID.ComputeHash();
+
+        if(ReorderInputVarUse.find(hash) == ReorderInputVarUse.end()) {
+          FindIndexingArguments Finder(*this, hash);
+          Expr *expr = const_cast<Expr*>(reorderExpr);
+          Finder.TraverseStmt(expr);
+          GenerateReorderingKernel(it->first, reorderExpr);
+        }
       }
     }
   }
 }
 
-void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputsMap, const Expr* expression) {
+void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, const Expr* expression) {
   bool verbose = VERBOSE;
+
+  llvm::FoldingSetNodeID ExprID;
+  expression->Profile(ExprID, getContext(), true);
+  unsigned hash = ExprID.ComputeHash();
+  auto& InputsMap = CGM.OpenMPSupport.getReorderInputVarUse()[hash];
 
   CodeGenFunction CGF(CGM, true);
   DefineJNITypes();
@@ -1734,10 +1752,9 @@ void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, llvm::DenseMap
         /*Params=*/FuncTy_args,
         /*isVarArg=*/false);
 
-  llvm::FoldingSetNodeID ExprID;
-  expression->Profile(ExprID, getContext(), true);
 
-  llvm::StringRef ReordFnName = llvm::StringRef("Java_org_llvm_openmp_OmpKernel_reorderMethod" + std::to_string(ExprID.ComputeHash()));
+
+  llvm::StringRef ReordFnName = llvm::StringRef("Java_org_llvm_openmp_OmpKernel_reorderMethod" + std::to_string(hash));
 
   if(verbose) llvm::errs() << ReordFnName.str() << "\n";
 
