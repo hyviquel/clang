@@ -164,54 +164,6 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "  }\n\n";
   }
 
-  /*
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
-    int id = IndexMap[it->first];
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
-        // TODO: Add multiple input
-        SPARK_FILE << ") : Long\n";
-
-        SPARK_FILE << "  def reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
-        // TODO: Add multiple input
-        SPARK_FILE << ") : Long";
-        SPARK_FILE << " = {\n";
-        SPARK_FILE << "    NativeKernels.loadOnce()\n";
-        SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
-        // TODO: Add multiple input
-        SPARK_FILE << ")\n";
-        SPARK_FILE << "  }\n\n";
-      }
-    }
-  }
-
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = IndexMap[it->first];
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        SPARK_FILE << "  @native def reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
-        // TODO: Add multiple input
-        SPARK_FILE << ") : Long\n";
-
-        SPARK_FILE << "  def reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(n0 : Long";
-        // TODO: Add multiple input
-        SPARK_FILE << ") : Long";
-        SPARK_FILE << " = {\n";
-        SPARK_FILE << "    NativeKernels.loadOnce()\n";
-        SPARK_FILE << "    return reorderMethod"<< std::to_string(ExprID.ComputeHash()) << "(n0";
-        // TODO: Add multiple input
-        SPARK_FILE << ")\n";
-        SPARK_FILE << "  }\n\n";
-      }
-    }
-  }
-  */
-
   SPARK_FILE << "}\n\n";
 }
 
