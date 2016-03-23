@@ -174,6 +174,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+  auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -226,8 +227,25 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   }
   SPARK_FILE << ".zipWithIndex().map{case (x,y) => (y,x)}\n"; // FIXME: Inverse with more indexes
 
-  SPARK_FILE << "    // Reorder input when needed\n";
+  SPARK_FILE << "\n";
+  SPARK_FILE << "    // Create RDDs containing reordered indexes\n";
+  for(auto it = ReorderInputVarUse.begin(); it != ReorderInputVarUse.end(); ++it) {
+    unsigned hash = it->first;
+    int NbInputs = it->second.size();
 
+    if(NbIndex == 1) {
+      SPARK_FILE << "    val reorder" << std::to_string(hash) << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(hash) << "(_)}\n";
+    }
+    else {
+      SPARK_FILE << "    val reorder" << std::to_string(hash) << " = index.mapValues{x => new OmpKernel().reorderMethodWrapper"<< std::to_string(hash) << "(x._1";
+      for(unsigned i = 1; i<NbIndex; ++i)
+        SPARK_FILE << ", x._" << i+1;
+      SPARK_FILE << ")}\n";
+    }
+  }
+
+  SPARK_FILE << "\n";
+  SPARK_FILE << "    // Reorder input when needed\n";
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
     int id = IndexMap[it->first];
@@ -236,42 +254,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
         llvm::FoldingSetNodeID ExprID;
         reorderExpr->Profile(ExprID, getContext(), true);
-
-        if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
-        }
-        else {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{x => new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(x._1";
-          for(unsigned i = 1; i<NbIndex; ++i)
-            SPARK_FILE << ", x._" << i+1;
-          SPARK_FILE << ")}\n";
-        }
-
-        SPARK_FILE << "    val input" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".map{case (x,y) => (y,x)}.join(arg" << id << ").map(_._2)\n";
-      }
-      id2++;
-    }
-  }
-
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = IndexMap[it->first];
-    int id2 = 0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-
-        if(NbIndex == 1) {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(_)}\n";
-        }
-        else {
-          SPARK_FILE << "    val reorder" << id << "_" << id2 << " = index.mapValues{x => new OmpKernel().reorderMethodWrapper"<< std::to_string(ExprID.ComputeHash()) << "(x._1";
-          for(unsigned i = 1; i<NbIndex; ++i)
-            SPARK_FILE << ", x._" << i+1;
-          SPARK_FILE << ")}\n";
-        }
-
-        // SPARK_FILE << "    val input" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".join(arg" << id << ").map(_._2)\n";
+        SPARK_FILE << "    val input" << id << "_" << id2 << " = reorder" << std::to_string(ExprID.ComputeHash()) << ".map{case (x,y) => (y,x)}.join(arg" << id << ").map(_._2)\n";
       }
       id2++;
     }
@@ -360,7 +343,9 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
         SPARK_FILE << "\n";
 
       if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = reorder" << id << "_" << id2 << ".join(res" << id << "_" << id2 << ").map(_._2)\n";
+        llvm::FoldingSetNodeID ExprID;
+        reorderExpr->Profile(ExprID, getContext(), true);
+        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = reorder" << std::to_string(ExprID.ComputeHash()) << ".join(res" << id << "_" << id2 << ").map(_._2)\n";
       } else {
         SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = res" << id << "_" << id2 << "\n";
       }
