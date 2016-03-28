@@ -91,6 +91,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto& reductionMap = CGM.OpenMPSupport.getReductionMap();
   auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
+  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
   unsigned NbInputs = 0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -146,14 +147,38 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     unsigned hash = it->first;
     int NbInputs = it->second.size();
 
-    SPARK_FILE << "  @native def reorderMethod"<< hash << "(n0 : Long";
-    for(unsigned i = 1; i<NbInputs; i++)
-      SPARK_FILE << ", n" << i << " : Long";
+
+
+    SPARK_FILE << "  @native def reorderMethod"<< hash << "(";
+    int i=0;
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2, i++) {
+      // Separator
+      if(it2 != it->second.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = CntMap.find(it2->first) != CntMap.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ": Long";
+      } else {
+        SPARK_FILE << "n" << i << ": Array[Byte]";
+      }
+    }
     SPARK_FILE << ") : Long\n";
 
-    SPARK_FILE << "  def reorderMethodWrapper"<< hash << "(n0 : Long";
-    for(unsigned i = 1; i<NbInputs; i++)
-      SPARK_FILE << ", n" << i << " : Long";
+    SPARK_FILE << "  def reorderMethodWrapper"<< hash << "(";
+    i=0;
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2, i++) {
+      // Separator
+      if(it2 != it->second.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = CntMap.find(it2->first) != CntMap.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ": Long";
+      } else {
+        SPARK_FILE << "n" << i << ": Array[Byte]";
+      }
+    }
     SPARK_FILE << ") : Long";
     SPARK_FILE << " = {\n";
     SPARK_FILE << "    NativeKernels.loadOnce()\n";
@@ -199,7 +224,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
   }
 
-
+  SPARK_FILE << "\n";
+  SPARK_FILE << "    // Generate RDDs of index\n";
   int NbIndex = 0;
 
   for (auto it = CntMap.begin(); it != CntMap.end(); ++it)
@@ -238,14 +264,30 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   for(auto it = ReorderInputVarUse.begin(); it != ReorderInputVarUse.end(); ++it) {
     unsigned hash = it->first;
     int NbInputs = it->second.size();
+    auto& InputVarUse = ReorderInputVarUse[hash];
 
     if(NbIndex == 1) {
       SPARK_FILE << "    val reorder" << std::to_string(hash) << " = index.mapValues{new OmpKernel().reorderMethodWrapper"<< std::to_string(hash) << "(_)}\n";
     }
     else {
-      SPARK_FILE << "    val reorder" << std::to_string(hash) << " = index.mapValues{x => new OmpKernel().reorderMethodWrapper"<< std::to_string(hash) << "(x._1";
-      for(unsigned i = 1; i<NbIndex; ++i)
-        SPARK_FILE << ", x._" << i+1;
+      SPARK_FILE << "    val reorder" << std::to_string(hash) << " = index.mapValues{x => new OmpKernel().reorderMethodWrapper"<< std::to_string(hash) << "(";
+
+      // Assign each argument according to its type
+      int i=1;
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        // Separator
+        if(it2 != it->second.begin())
+          SPARK_FILE << ", ";
+
+        bool isCnt = CntMap.find(it2->first) != CntMap.end();
+        if(isCnt) {
+          SPARK_FILE << "x._" << i;
+          i++;
+        } else {
+          int id = IndexMap[it2->first];
+          SPARK_FILE << "arg" << id;
+        }
+    }
       SPARK_FILE << ")}\n";
     }
   }
@@ -273,20 +315,24 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   int i=0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
-    int id = IndexMap[it->first];
-    int id2 = 0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(i!=0) SPARK_FILE << ".join(";
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        SPARK_FILE << "input" << id << "_" << id2;
+    // Add only array argument to the RDD
+    bool isRDD = it->first->getType()->isAnyPointerType();
+    if(isRDD) {
+      int id = IndexMap[it->first];
+      int id2 = 0;
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        if(i!=0) SPARK_FILE << ".join(";
+        if(const Expr* reorderExpr = ReorderMap[*it2]) {
+          SPARK_FILE << "input" << id << "_" << id2;
+        }
+        else {
+          SPARK_FILE << "arg" << id;
+        }
+        if(i!=0) SPARK_FILE << ")";
+        if(i>1) SPARK_FILE << ".map{case (k, ((x, y), z)) => (k, (x, y, z))}";
+        i++;
+        id2++;
       }
-      else {
-        SPARK_FILE << "arg" << id;
-      }
-      if(i!=0) SPARK_FILE << ")";
-      if(i>1) SPARK_FILE << ".map{case (k, ((x, y), z)) => (k, (x, y, z))}";
-      i++;
-      id2++;
     }
   }
   SPARK_FILE << "\n\n";
@@ -295,6 +341,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
   unsigned NbInputs = 0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -304,9 +351,28 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   if (NbInputs == 1)
     SPARK_FILE << "    var mapres = mapargs.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(x._1";
-    for(unsigned i = 1; i<NbInputs; ++i)
-      SPARK_FILE << ", x._" << i+1;
+    SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(";
+
+    // Assign each argument according to its type
+    int i=1;
+    for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+    {
+      bool isRDD = it->first->getType()->isAnyPointerType();
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        // Separator
+        if(it != InputVarUse.begin() || it2 != it->second.begin())
+          SPARK_FILE << ", ";
+        if(isRDD) {
+          SPARK_FILE << "x._" << i;
+          i++;
+        } else {
+          int id = IndexMap[it->first];
+          SPARK_FILE << "arg" << id;
+        }
+      }
+    }
+
     SPARK_FILE << ") }\n\n";
   }
 }
