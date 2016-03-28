@@ -570,12 +570,14 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
   bool verbose;
 
   llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*,8>> &InputsMap;
+  llvm::SmallSet<const VarDecl *, 16> &InputsSet;
 
   ArraySubscriptExpr *CurrArrayExpr;
   Expr *CurrArrayIndexExpr;
 
   FindIndexingArguments(CodeGenFunction &CGF, unsigned hash)
-    : CGF(CGF), CGM(CGF.CGM), InputsMap(CGM.OpenMPSupport.getReorderInputVarUse()[hash]) {
+    : CGF(CGF), CGM(CGF.CGM), InputsMap(CGM.OpenMPSupport.getReorderInputVarUse()[hash]),
+      InputsSet(CGM.OpenMPSupport.getOffloadingInputs()) {
     verbose = VERBOSE;
     CurrArrayExpr = NULL;
   }
@@ -595,6 +597,7 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
       }
 
       InputsMap[VD].push_back(RefExpr);
+      InputsSet.insert(VD);
 
       if(verbose) llvm::errs() << "\n";
     }
@@ -652,6 +655,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(MapType == OMP_TGT_MAPTYPE_TO) {
         CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
         if (verbose) llvm::errs() << " --> input";
       }
       else if (MapType == OMP_TGT_MAPTYPE_FROM) {

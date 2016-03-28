@@ -175,22 +175,28 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
   auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
+  auto& InputsSet = CGM.OpenMPSupport.getOffloadingInputs();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
-  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+  for (auto it = InputsSet.begin(); it != InputsSet.end(); ++it)
   {
-    int id = IndexMap[it->first];
+    int id = IndexMap[*it];
 
     // Find the bit size of one element
-    QualType varType = it->first->getType();
+    QualType varType = (*it)->getType();
+    bool isRDD = varType->isAnyPointerType();
 
     while(varType->isAnyPointerType()) {
       varType = varType->getPointeeType();
     }
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
-    SPARK_FILE << "    val arg" << id << " = info.indexedRead(" << id << ", " << SizeInByte << ")"
-               << " // Variable " << it->first->getName() <<"\n";
+    SPARK_FILE << "    val arg" << id << " = ";
+    if(isRDD)
+      SPARK_FILE << "info.indexedRead(" << id << ", " << SizeInByte << ")";
+    else
+      SPARK_FILE << "info.read(" << id << ", " << SizeInByte << ")";
+    SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
   }
 
 
