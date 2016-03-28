@@ -111,12 +111,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
-  else if (NbOutputs == 2)
-    SPARK_FILE << "Tuple2[Array[Byte], Array[Byte]]";
-  else if (NbOutputs == 3)
-    SPARK_FILE << "Tuple3[Array[Byte], Array[Byte], Array[Byte]]";
-  else
-    SPARK_FILE << "Seq[Array[Byte]]";
+  else {
+    SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
+    for(unsigned i = 1; i<NbOutputs; i++)
+      SPARK_FILE << ", Array[Byte]";
+    SPARK_FILE << "]";
+  }
   SPARK_FILE << "\n";
   SPARK_FILE << "  def mappingWrapper(n0 : Array[Byte]";
   for(unsigned i = 1; i<NbInputs; i++)
@@ -124,12 +124,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
-  else if (NbOutputs == 2)
-    SPARK_FILE << "Tuple2[Array[Byte], Array[Byte]]";
-  else if (NbOutputs == 3)
-    SPARK_FILE << "Tuple3[Array[Byte], Array[Byte], Array[Byte]]";
-  else
-    SPARK_FILE << "Seq[Array[Byte]]";
+  else {
+    SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
+    for(unsigned i = 1; i<NbOutputs; i++)
+      SPARK_FILE << ", Array[Byte]";
+    SPARK_FILE << "]";
+  }
   SPARK_FILE << " = {\n";
   SPARK_FILE << "    NativeKernels.loadOnce()\n";
   SPARK_FILE << "    return mappingMethod(n0";
