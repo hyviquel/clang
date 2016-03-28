@@ -468,10 +468,10 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   CheckValue = CheckValue->IgnoreParenImpCasts();
   InitValue = InitValue->IgnoreParenImpCasts();
 
-  if (TestChecker.isStrictOp()) {
-    Diff = BuildBinOp(DSAStack->getCurScope(), InitLoc, BO_Sub, CheckValue,
-                      ActOnIntegerConstant(SourceLocation(), 1));
-  }
+//  if (TestChecker.isStrictOp()) {
+//    Diff = BuildBinOp(DSAStack->getCurScope(), InitLoc, BO_Sub, CheckValue,
+//                      ActOnIntegerConstant(SourceLocation(), 1));
+//  }
 
   InitVal = InitValue;
   CheckVal = CheckValue;
