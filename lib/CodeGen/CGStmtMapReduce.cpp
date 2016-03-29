@@ -1068,91 +1068,15 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::PointerType* PointerTy_Int8 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
   llvm::PointerType* PointerTy_Int32 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
-  llvm::ArrayType* ArrayTy_0 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
-  llvm::ArrayType* ArrayTy_2 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
-  llvm::ArrayType* ArrayTy_4 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
-  llvm::ArrayType* ArrayTy_42 = llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
-
-  // Global variable
-  llvm::GlobalVariable* gvar_array__str = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                   /*Type=*/ArrayTy_0,
-                                                                   /*isConstant=*/true,
-                                                                   /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                   /*Initializer=*/0,
-                                                                   /*Name=*/".str");
-
-  llvm::GlobalVariable* gvar_array__str2 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                    /*Type=*/ArrayTy_0,
-                                                                    /*isConstant=*/true,
-                                                                    /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                    /*Initializer=*/0,
-                                                                    /*Name=*/".str");
-
-  llvm::GlobalVariable* gvar_array__str_1 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                     /*Type=*/ArrayTy_2,
-                                                                     /*isConstant=*/true,
-                                                                     /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                     /*Initializer=*/0,
-                                                                     /*Name=*/".str.1");
-
-  llvm::GlobalVariable* gvar_array__str_2 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                     /*Type=*/ArrayTy_4,
-                                                                     /*isConstant=*/true,
-                                                                     /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                     /*Initializer=*/0,
-                                                                     /*Name=*/".str.2");
-
-  llvm::GlobalVariable* gvar_array__str_22 = new llvm::GlobalVariable(/*Module=*/*mod,
-                                                                      /*Type=*/ArrayTy_42,
-                                                                      /*isConstant=*/true,
-                                                                      /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-                                                                      /*Initializer=*/0,
-                                                                      /*Name=*/".str.22");
-
-
-  // Generate useful type and constant
-
   llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
-  llvm::ConstantInt* const_int64_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
   llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
 
-  llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
-  llvm::Constant *const_array_262_2 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple3", true);
-  llvm::Constant *const_array_263 = llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
-  llvm::Constant *const_array_264 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
-  llvm::Constant *const_array_264_2 = llvm::ConstantDataArray::getString(mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
-
-  std::vector<llvm::Constant*> const_ptr_277_indices;
-  const_ptr_277_indices.push_back(const_int64_0);
-  const_ptr_277_indices.push_back(const_int64_0);
-  llvm::Constant* const_ptr_277 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str, const_ptr_277_indices);
-
-  std::vector<llvm::Constant*> const_ptr_277_2_indices;
-  const_ptr_277_2_indices.push_back(const_int64_0);
-  const_ptr_277_2_indices.push_back(const_int64_0);
-  llvm::Constant* const_ptr_277_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str2, const_ptr_277_2_indices);
-
-  std::vector<llvm::Constant*> const_ptr_279_indices;
-  const_ptr_279_indices.push_back(const_int64_0);
-  const_ptr_279_indices.push_back(const_int64_0);
-  llvm::Constant* const_ptr_279 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_1, const_ptr_279_indices);
-
-  std::vector<llvm::Constant*> const_ptr_280_indices;
-  const_ptr_280_indices.push_back(const_int64_0);
-  const_ptr_280_indices.push_back(const_int64_0);
-  llvm::Constant* const_ptr_280 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_2, const_ptr_280_indices);
-
-  std::vector<llvm::Constant*> const_ptr_280_2_indices;
-  const_ptr_280_2_indices.push_back(const_int64_0);
-  const_ptr_280_2_indices.push_back(const_int64_0);
-  llvm::Constant* const_ptr_280_2 = llvm::ConstantExpr::getGetElementPtr(nullptr, gvar_array__str_22, const_ptr_280_2_indices);
-
-  // Init global variables
-  gvar_array__str->setInitializer(const_array_262);
-  gvar_array__str2->setInitializer(const_array_262_2);
-  gvar_array__str_1->setInitializer(const_array_263);
-  gvar_array__str_2->setInitializer(const_array_264);
-  gvar_array__str_22->setInitializer(const_array_264_2);
+  // Global variable
+  llvm::Value* const_ptr_init = CGF.Builder.CreateGlobalStringPtr("<init>", ".str.init");
+  llvm::Value* const_ptr_tuple2 = CGF.Builder.CreateGlobalStringPtr("scala/Tuple2", ".str.tuple2");
+  llvm::Value* const_ptr_tuple3 = CGF.Builder.CreateGlobalStringPtr("scala/Tuple3", ".str.tuple3");
+  llvm::Value* const_ptr_tuple2_args = CGF.Builder.CreateGlobalStringPtr("(Ljava/lang/Object;Ljava/lang/Object;)V", ".str.tuple2.args");
+  llvm::Value* const_ptr_tuple3_args = CGF.Builder.CreateGlobalStringPtr("(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", ".str.tuple3.args");
 
   // Allocate and load compulsry JNI arguments
   llvm::Function::arg_iterator args = MapFn->arg_begin();
@@ -1305,7 +1229,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
-    ptr_330_params.push_back(const_ptr_277);
+    ptr_330_params.push_back(const_ptr_tuple2);
     llvm::CallInst* ptr_330 = CGF.Builder.CreateCall(ptr_329, ptr_330_params);
     ptr_330->setCallingConv(llvm::CallingConv::C);
     ptr_330->setTailCall(false);
@@ -1316,8 +1240,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
     ptr_334_params.push_back(ptr_330);
-    ptr_334_params.push_back(const_ptr_279);
-    ptr_334_params.push_back(const_ptr_280);
+    ptr_334_params.push_back(const_ptr_init);
+    ptr_334_params.push_back(const_ptr_tuple2_args);
     llvm::CallInst* ptr_334 = CGF.Builder.CreateCall(ptr_333, ptr_334_params);
     ptr_334->setCallingConv(llvm::CallingConv::C);
     ptr_334->setTailCall(false);
@@ -1344,7 +1268,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
-    ptr_330_params.push_back(const_ptr_277_2);
+    ptr_330_params.push_back(const_ptr_tuple3);
     llvm::CallInst* ptr_330 = CGF.Builder.CreateCall(ptr_329, ptr_330_params);
     ptr_330->setCallingConv(llvm::CallingConv::C);
     ptr_330->setTailCall(false);
@@ -1355,8 +1279,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
     ptr_334_params.push_back(ptr_330);
-    ptr_334_params.push_back(const_ptr_279);
-    ptr_334_params.push_back(const_ptr_280_2);
+    ptr_334_params.push_back(const_ptr_init);
+    ptr_334_params.push_back(const_ptr_tuple3_args);
     llvm::CallInst* ptr_334 = CGF.Builder.CreateCall(ptr_333, ptr_334_params);
     ptr_334->setCallingConv(llvm::CallingConv::C);
     ptr_334->setTailCall(false);
