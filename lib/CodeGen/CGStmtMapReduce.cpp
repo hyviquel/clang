@@ -875,7 +875,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
         break;
       }
       case OMPC_REDUCTION_max: {
-        // TODO
+        // TODO: What about min/max op ?
         break;
       }
       case OMPC_REDUCTION_custom:
@@ -929,7 +929,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275_2, "");
     std::vector<llvm::Value*> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(const_int32_4); // TOFIX: That should the size in byte of the element
+    ptr_277_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
     llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
     ptr_277->setCallingConv(llvm::CallingConv::C);
     ptr_277->setTailCall(true);
@@ -942,7 +942,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     void_281_params.push_back(ptr_env);
     void_281_params.push_back(ptr_277);
     void_281_params.push_back(const_int32_0);
-    void_281_params.push_back(const_int32_4); // TOFIX: That should the size in byte of the element
+    void_281_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
     void_281_params.push_back(ptr_res_cast);
     llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
     void_281->setCallingConv(llvm::CallingConv::C);
@@ -1104,7 +1104,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       const VarDecl *VD = it->first;
-      llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
 
       args->setName(VD->getName());
       llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
@@ -1113,6 +1112,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_Int8);
 
       llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
+
       std::vector<llvm::Value*> ptr_275_params;
       ptr_275_params.push_back(ptr_273);
       ptr_275_params.push_back(ptr_274);
@@ -1120,13 +1120,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
       ptr_275->setCallingConv(llvm::CallingConv::C);
       ptr_275->setTailCall(false);
-      llvm::AttributeSet ptr_275_PAL;
-      ptr_275->setAttributes(ptr_275_PAL);
-      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_Int32);
+
+      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_Int32); // FIXME: Cast to the right type
 
       VecPtrBarrays.push_back(ptr_274);
       VecPtrValues.push_back(ptr_275);
-
 
       CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, ptr_265);
       args++;
@@ -1134,8 +1132,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Allocate output variables
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
-  {
+  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it) {
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       const VarDecl *VD = it->first;
 
@@ -1192,7 +1189,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
       std::vector<llvm::Value*> ptr_277_params;
       ptr_277_params.push_back(ptr_env);
-      ptr_277_params.push_back(const_int32_4); // TOFIX: That should the size in byte of the element
+      ptr_277_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
       llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
       ptr_277->setCallingConv(llvm::CallingConv::C);
       ptr_277->setTailCall(true);
@@ -1204,7 +1201,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       void_281_params.push_back(ptr_env);
       void_281_params.push_back(ptr_277);
       void_281_params.push_back(const_int32_0);
-      void_281_params.push_back(const_int32_4); // TOFIX: That should the size in byte of the element
+      void_281_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
       void_281_params.push_back(ptr_273);
       llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
       void_281->setCallingConv(llvm::CallingConv::C);
@@ -1300,8 +1297,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_338->setTailCall(false);
 
     llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
-  } else if (NbOutputs == 4) {
-    // Construct and return a Collection
+  } else {
+    // TODO: Construct and return Tuples in generic way
   }
 }
 
