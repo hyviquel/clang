@@ -329,7 +329,19 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
           SPARK_FILE << "arg" << id;
         }
         if(i!=0) SPARK_FILE << ")";
-        if(i>1) SPARK_FILE << ".map{case (k, ((x, y), z)) => (k, (x, y, z))}";
+        if(i>1) {
+          int j;
+          // Flatten the RDDs after the join when needed
+          SPARK_FILE << ".mapValues{case ((u0";
+          for(j=1; j<i; j++) {
+            SPARK_FILE << ", " << "u" << j;
+          }
+          SPARK_FILE << "), u" << j << ") => (u0";
+          for(j=1; j<=i; j++) {
+            SPARK_FILE << ", " << "u" << j;
+          }
+          SPARK_FILE << ")}";
+        }
         i++;
         id2++;
       }
