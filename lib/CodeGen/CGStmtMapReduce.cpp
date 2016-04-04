@@ -1150,7 +1150,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   CGF.EmitStmt(Body);
-  if(verbose) Body->dump();
 
   auto ptrBarray = VecPtrBarrays.begin();
   auto ptrValue = VecPtrValues.begin();
