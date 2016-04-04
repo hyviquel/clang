@@ -570,12 +570,23 @@ struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments>
       if(verbose) llvm::errs() << "Indexing use the variable " << VD->getName();
       const Expr *RefExpr;
 
+      int MapType = CGM.OpenMPSupport.getMapType(VD);
+
       if(CurrArrayExpr != nullptr) {
         RefExpr = CurrArrayExpr;
         if(verbose) llvm::errs() << "Require more advanced analysis\n";
-        exit(0);
+        exit(1);
       } else {
         RefExpr = D;
+      }
+
+      if (MapType == -1) {
+        // FIXME: That should be detected before
+        if (verbose) llvm::errs() << "Add to input (not in clause)";
+        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
+
       }
 
       InputsMap[VD].push_back(RefExpr);
@@ -625,7 +636,9 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       unsigned MapType = CGM.OpenMPSupport.getMapType(VD);
 
-      if (verbose) llvm::errs() << " --> That's an argument";
+      if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
+
+      int MapType = CGM.OpenMPSupport.getMapType(VD);
 
       const Expr *RefExpr;
 
@@ -635,17 +648,32 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
         RefExpr = D;
       }
 
-      if(MapType == OMP_TGT_MAPTYPE_TO) {
+      if (MapType == -1) {
+        // FIXME: That should be detected before
+        if (verbose) llvm::errs() << " --> assume input (not in clause)";
         CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
         CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-        if (verbose) llvm::errs() << " --> input";
-      }
-      else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
-        if (verbose) llvm::errs() << " --> output";
-      }
-      else {
-        if (verbose) llvm::errs() << " --> euuh something";
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
+
+      } else {
+        if (verbose) llvm::errs() << " --> That's an argument";
+
+        if(MapType == OMP_TGT_MAPTYPE_TO) {
+          CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
+          CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
+          if (verbose) llvm::errs() << " --> input";
+        }
+        else if (MapType == OMP_TGT_MAPTYPE_FROM) {
+          CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
+          if (verbose) llvm::errs() << " --> output";
+        }
+        else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
+          if (verbose) llvm::errs() << " --> both input/output not supported";
+          exit(1);
+        } else {
+          if (verbose) llvm::errs() << " --> euuh something not supported";
+          exit(1);
+        }
       }
 
       if(verbose) llvm::errs() << "\n";
