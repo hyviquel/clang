@@ -1121,9 +1121,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
   llvm::LoadInst* ptr_ptr_env = CGF.Builder.CreateLoad(ptr_env, "");
 
-  llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 184);
-  llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-  llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
+  llvm::Value* ptr_gep_env = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 184);
+  llvm::LoadInst* ptr_fn_env = CGF.Builder.CreateLoad(ptr_gep_env, "");
 
   // Keep values that have to be used for releasing.
   llvm::SmallVector<llvm::Value*, 8> VecPtrBarrays;
@@ -1134,26 +1133,33 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       const VarDecl *VD = it->first;
 
+      // Find the type of one element
+      QualType varType = VD->getType();
+      while(varType->isAnyPointerType()) {
+        varType = varType->getPointeeType();
+      }
+      llvm::Type *TyObject_arg = ConvertType(varType);
+      llvm::PointerType* PointerTy_arg = llvm::PointerType::get(TyObject_arg, 0);
+
       args->setName(VD->getName());
       llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
       llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
+      llvm::LoadInst* ptr_arg = CGF.Builder.CreateLoad(alloca_arg, "");
 
-      llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_Int8);
+      llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
 
-      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
+      std::vector<llvm::Value*> ptr_load_arg_params;
+      ptr_load_arg_params.push_back(ptr_env);
+      ptr_load_arg_params.push_back(ptr_arg);
+      ptr_load_arg_params.push_back(const_ptr_null);
+      llvm::CallInst* ptr_load_arg = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
+      ptr_load_arg->setCallingConv(llvm::CallingConv::C);
+      ptr_load_arg->setTailCall(false);
 
-      std::vector<llvm::Value*> ptr_275_params;
-      ptr_275_params.push_back(ptr_273);
-      ptr_275_params.push_back(ptr_274);
-      ptr_275_params.push_back(const_ptr_256);
-      llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
-      ptr_275->setCallingConv(llvm::CallingConv::C);
-      ptr_275->setTailCall(false);
+      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
 
-      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_Int32); // FIXME: Cast to the right type
-
-      VecPtrBarrays.push_back(ptr_274);
-      VecPtrValues.push_back(ptr_275);
+      VecPtrBarrays.push_back(ptr_arg);
+      VecPtrValues.push_back(ptr_load_arg);
 
       CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, ptr_265);
       args++;
@@ -1171,8 +1177,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
         varType = varType->getPointeeType();
       }
 
-      llvm::Type *TyObject = ConvertType(varType);
-      llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject);
+      llvm::Type *TyObject_res = ConvertType(varType);
+      llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject_res);
 
       CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_res);
     }
