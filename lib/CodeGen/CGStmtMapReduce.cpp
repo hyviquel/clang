@@ -959,7 +959,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   const OMPParallelForDirective &ForDirective = cast<OMPParallelForDirective>(S);
 
-
+  // FIXME: Dirty tricks ;-)
+  CGM.OpenMPSupport.syncStack();
   DefineJNITypes();
 
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();

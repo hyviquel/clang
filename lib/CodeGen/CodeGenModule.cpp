@@ -4421,14 +4421,33 @@ llvm::DenseMap<const ValueDecl *, unsigned> &CodeGenModule::OpenMPSupportStackTy
     }
   }
 }
-unsigned CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
+void CodeGenModule::OpenMPSupportStackTy::syncStack() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVarsIndex.size() > 0) {
+      OpenMPStack.back().CurrentIdentifier = I->CurrentIdentifier;
+      // Sync type
+      for(auto it = I->OffloadingMapVarsType.begin(); it != I->OffloadingMapVarsType.end(); it++) {
+        OpenMPStack.back().OffloadingMapVarsType[it->first] = it->second;
+      }
+      // Sync index
+      for(auto it = I->OffloadingMapVarsIndex.begin(); it != I->OffloadingMapVarsIndex.end(); it++) {
+        OpenMPStack.back().OffloadingMapVarsIndex[it->first] = it->second;
+      }
+
+      return;
+    }
+  }
+}
+int CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
   for(OMPStackElemTy& elt : OpenMPStack) {
     if(elt.OffloadingMapVarsType.find(VD) != elt.OffloadingMapVarsType.end()) {
       return elt.OffloadingMapVarsType[VD];
     }
   }
   llvm::errs() << "\nError: Var " << VD->getName() << " is not offloaded\n";
-  return 0;
+  return -1;
 }
 void CodeGenModule::OpenMPSupportStackTy::setMapsBegin(bool Flag){
   OpenMPStack.back().MapsBegin = Flag;

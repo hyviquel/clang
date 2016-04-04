@@ -1488,13 +1488,14 @@ public:
     }
     llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsType();
     llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsIndex();
+    void syncStack();
     llvm::DenseMap<const Expr*, const Expr*> &getReorderMap() {
       return OpenMPStack.back().ReorderMap;
     }
     llvm::DenseMap<unsigned, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>>> &getReorderInputVarUse() {
       return OpenMPStack.back().ReorderInputVarUse;
     }
-    unsigned getMapType(const VarDecl* VD);
+    int getMapType(const VarDecl* VD);
     void setMapsBegin(bool Flag);
     bool getMapsBegin();
     void setMapsEnd(bool Flag);
