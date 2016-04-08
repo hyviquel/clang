@@ -634,10 +634,6 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     if(const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
       if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
 
-      unsigned MapType = CGM.OpenMPSupport.getMapType(VD);
-
-      if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
-
       int MapType = CGM.OpenMPSupport.getMapType(VD);
 
       const Expr *RefExpr;
