@@ -647,34 +647,36 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
       if (MapType == -1) {
         // FIXME: That should be detected before
         if (verbose) llvm::errs() << " --> assume input (not in clause)";
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
+        MapType = CGM.OpenMPSupport.getMapType(VD);
+      }
+
+      if (verbose) llvm::errs() << " --> That's an argument";
+
+      if(MapType == OMP_TGT_MAPTYPE_TO) {
         CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
         CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
-
+        CGM.OpenMPSupport.getOffloadingInputStyle()[VD] = 1;
+        if (verbose) llvm::errs() << " --> input";
+      }
+      else if (MapType == OMP_TGT_MAPTYPE_FROM) {
+        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
+        if (verbose) llvm::errs() << " --> output";
+      }
+      else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
+        if (verbose) llvm::errs() << " --> both input/output not supported";
+        exit(1);
       } else {
-        if (verbose) llvm::errs() << " --> That's an argument";
-
-        if(MapType == OMP_TGT_MAPTYPE_TO) {
-          CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
-          CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-          if (verbose) llvm::errs() << " --> input";
-        }
-        else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-          CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
-          if (verbose) llvm::errs() << " --> output";
-        }
-        else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-          if (verbose) llvm::errs() << " --> both input/output not supported";
-          exit(1);
-        } else {
-          if (verbose) llvm::errs() << " --> euuh something not supported";
-          exit(1);
-        }
+        if (verbose) llvm::errs() << " --> euuh something not supported";
+        exit(1);
       }
 
       if(verbose) llvm::errs() << "\n";
 
-      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
+
+
+      /*FIXME: experiment without input reordering*/
+      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue() && MapType == OMP_TGT_MAPTYPE_FROM) {
         if(verbose) llvm::errs() << "Require reordering\n";
         CGM.OpenMPSupport.getReorderMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
       }
@@ -692,6 +694,9 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     TraverseStmt(A->getBase());
     CurrArrayExpr = nullptr;
     CurrArrayIndexExpr = nullptr;
+
+    // FIXME: experiment without reordering
+    TraverseStmt(A->getIdx());
     return true;
   }
 

@@ -195,7 +195,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
+  auto& InputStyle = CGM.OpenMPSupport.getOffloadingInputStyle();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();

@@ -1274,8 +1274,7 @@ public:
       llvm::SmallSet<const VarDecl *, 16> OffloadingInputs;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingOutputVarDef;
-      llvm::DenseMap<const VarDecl*, unsigned> OffloadingInputReorderNb;
-      llvm::DenseMap<const VarDecl*, unsigned> OffloadingOutputReorderNb;
+      llvm::DenseMap<const VarDecl*, unsigned> OffloadingInputStyle;
       llvm::DenseMap<const Expr*, const Expr*> ReorderMap;
       llvm::DenseMap<unsigned, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>>> ReorderInputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  OffloadingCounterInfo;
@@ -1477,11 +1476,8 @@ public:
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingOutputVarDef() {
       return OpenMPStack.back().OffloadingOutputVarDef;
     }
-    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingInputReorderNb() {
-      return OpenMPStack.back().OffloadingInputReorderNb;
-    }
-    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingOutputReorderNb() {
-      return OpenMPStack.back().OffloadingOutputReorderNb;
+    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingInputStyle() {
+      return OpenMPStack.back().OffloadingInputStyle;
     }
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>> &getOffloadingCounterInfo() {
       return OpenMPStack.back().OffloadingCounterInfo;
