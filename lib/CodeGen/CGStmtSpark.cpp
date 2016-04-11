@@ -209,7 +209,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     // Find the bit size of one element
     QualType varType = (*it)->getType();
-    bool isRDD = varType->isAnyPointerType();
+
+    unsigned style = InputStyle[*it];
 
     while(varType->isAnyPointerType()) {
       varType = varType->getPointeeType();
@@ -217,10 +218,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
     SPARK_FILE << "    val arg" << id << " = ";
-    if(isRDD)
-      SPARK_FILE << "info.indexedRead(" << id << ", " << SizeInByte << ")";
-    else
-      SPARK_FILE << "info.read(" << id << ", " << SizeInByte << ")";
+    SPARK_FILE << "info.read(" << id << ", " << SizeInByte << ")";
     SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
   }
 
@@ -355,33 +353,33 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
+  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+
   unsigned NbInputs = 0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
     NbInputs += it->second.size();
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = mapargs.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    var mapres = index.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(";
+    SPARK_FILE << "    var mapres = index.mapValues{ x => new OmpKernel().mappingWrapper(";
 
     // Assign each argument according to its type
     int i=1;
     for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
     {
-      bool isRDD = it->first->getType()->isAnyPointerType();
+      bool isCnt = CntMap.find(it->first) != CntMap.end();
 
-      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        // Separator
-        if(it != InputVarUse.begin() || it2 != it->second.begin())
-          SPARK_FILE << ", ";
-        if(isRDD) {
-          SPARK_FILE << "x._" << i;
-          i++;
-        } else {
-          int id = IndexMap[it->first];
-          SPARK_FILE << "arg" << id;
-        }
+      // Separator
+      if(it != InputVarUse.begin())
+        SPARK_FILE << ", ";
+      if(isCnt) {
+        SPARK_FILE << "x._" << i;
+        i++;
+      } else {
+        int id = IndexMap[it->first];
+        SPARK_FILE << "arg" << id;
       }
     }
 
