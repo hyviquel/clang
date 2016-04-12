@@ -93,9 +93,9 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
-  unsigned NbInputs = 0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-    NbInputs += it->second.size();
+  int i;
+
+  unsigned NbInputs = InputVarUse.size();
   // Outputs are reorder a posteriori
   unsigned NbOutputs = 0;
   for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
@@ -106,9 +106,20 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << "\n";
   SPARK_FILE << "import org.apache.spark.SparkFiles\n";
   SPARK_FILE << "class OmpKernel {\n";
-  SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
-  for(unsigned i = 1; i<NbInputs; i++)
-    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << "  @native def mappingMethod(";
+  i=0;
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
+    // Separator
+    if(it != InputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -119,9 +130,20 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "]";
   }
   SPARK_FILE << "\n";
-  SPARK_FILE << "  def mappingWrapper(n0 : Array[Byte]";
-  for(unsigned i = 1; i<NbInputs; i++)
-    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << "  def mappingWrapper(";
+  i=0;
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
+    // Separator
+    if(it != InputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -307,6 +329,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   }
 
   SPARK_FILE << "    \n";
+
+  /*
   SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
   SPARK_FILE << "    var mapargs = ";
 
@@ -345,6 +369,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       }
     }
   }
+  */
   SPARK_FILE << "\n\n";
 }
 
@@ -375,8 +400,12 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
       if(it != InputVarUse.begin())
         SPARK_FILE << ", ";
       if(isCnt) {
-        SPARK_FILE << "x._" << i;
-        i++;
+        if(CntMap.size() == 1) {
+          SPARK_FILE << "x";
+        } else {
+          SPARK_FILE << "x._" << i;
+          i++;
+        }
       } else {
         int id = IndexMap[it->first];
         SPARK_FILE << "arg" << id;
