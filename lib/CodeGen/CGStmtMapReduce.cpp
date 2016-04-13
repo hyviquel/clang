@@ -1094,6 +1094,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::PointerType* PointerTy_Int32 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
   llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
+  llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
   llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
 
   // Global variable
@@ -1195,7 +1196,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       void_272_params.push_back(ptr_env);
       void_272_params.push_back(*ptrBarray);
       void_272_params.push_back(*ptrValue);
-      void_272_params.push_back(const_int32_0);
+      void_272_params.push_back(const_int32_2);
       llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
       void_272->setCallingConv(llvm::CallingConv::C);
       void_272->setTailCall(true);
