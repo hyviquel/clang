@@ -67,7 +67,9 @@ void CodeGenFunction::EmitSparkJob() {
 
   SPARK_FILE << "  def main(args: Array[String]) {\n"
              << "    \n"
-             << "    val info = new CloudInfo(args(0), args(1), args(2), args(3))\n"
+             << "    val fs = CloudFileSystem.create(args(0), args(1), args(2), args(3))\n"
+             << "    val at = AddressTable.create(fs)\n"
+             << "    val info = new CloudInfo(fs, at)\n"
              << "    \n";
 
   EmitSparkInput(SPARK_FILE);
