@@ -2448,9 +2448,6 @@ static const Expr *isSimpleArrayDecayOperand(const Expr *E) {
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                                bool Accessed) {
 
-  if (llvm::Value *Val = (CGM.OpenMPSupport.getOpenMPKernelArgVar(E)))
-    return MakeAddrLValue(Val, E->getType());
-
   // The index must always be an integer, which is not an aggregate.  Emit it.
   llvm::Value *Idx = EmitScalarExpr(E->getIdx());
   QualType IdxTy  = E->getIdx()->getType();

@@ -98,10 +98,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   int i;
 
   unsigned NbInputs = InputVarUse.size();
-  // Outputs are reorder a posteriori
-  unsigned NbOutputs = 0;
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-    NbOutputs += it->second.size();
+  unsigned NbOutputs = OutputVarDef.size();
 
   if(verbose) llvm::errs() << "NbInput => " << NbInputs << "\n";
   if(verbose) llvm::errs() << "NbOutput => " << NbOutputs << "\n";
@@ -122,6 +119,8 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
   }
+  for(unsigned j = 0; j<NbOutputs; j++, i++)
+    SPARK_FILE << ", n" << i << ": Int";
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -146,6 +145,8 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
   }
+  for(unsigned j = 0; j<NbOutputs; j++, i++)
+    SPARK_FILE << ", n" << i << ": Int";
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -158,7 +159,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << " = {\n";
   SPARK_FILE << "    NativeKernels.loadOnce()\n";
   SPARK_FILE << "    return mappingMethod(n0";
-  for(unsigned i = 1; i<NbInputs; i++)
+  for(unsigned i = 1; i<NbInputs+NbOutputs; i++)
     SPARK_FILE << ", n" << i;
   SPARK_FILE << ")\n";
   SPARK_FILE << "  }\n\n";
@@ -242,7 +243,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
     SPARK_FILE << "    val arg" << id << " = ";
-    SPARK_FILE << "info.read(" << id << ", " << SizeInByte << ")";
+    SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
     SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
   }
 
@@ -279,7 +280,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   for(int i=1; i<NbIndex; i++) {
     SPARK_FILE << ".cartesian(index" << i << ")";
   }
-  SPARK_FILE << ".zipWithIndex().map{case (x,y) => (y,x)}\n"; // FIXME: Inverse with more indexes
+  SPARK_FILE << "\n"; // FIXME: Inverse with more indexes
 
   SPARK_FILE << "\n";
   SPARK_FILE << "    // Create RDDs containing reordered indexes\n";
@@ -379,6 +380,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
 
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
@@ -388,9 +390,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = index.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    var mapres = index.map{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = index.mapValues{ x => new OmpKernel().mappingWrapper(";
+    SPARK_FILE << "    var mapres = index.map{ x => new OmpKernel().mappingWrapper(";
 
     // Assign each argument according to its type
     int i=1;
@@ -413,6 +415,11 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
         SPARK_FILE << "arg" << id;
       }
     }
+    for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+    {
+      int id = IndexMap[it->first];
+      SPARK_FILE << ", at.get(" << id << ")";
+    }
 
     SPARK_FILE << ") }\n\n";
   }
@@ -423,9 +430,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
-  unsigned NbOutputs = 0;
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-    NbOutputs += it->second.size();
+  unsigned NbOutputs = OutputVarDef.size();
 
   SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
   int i=0;
@@ -436,45 +441,25 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     int id2 = 0;
     bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
 
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(NbOutputs == 1) {
-        // 1 output -> return the result directly
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres";
-      }
-      else if(NbOutputs == 2 || NbOutputs == 3) {
-        // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x._" << i+1 << "}";
-      }
-      else {
-        // More than 3 outputs -> extract each variable from the Collection
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x(" << i << ") }";
-      }
-
-      if(isReduced)
-        SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
-      else
-        SPARK_FILE << "\n";
-
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = reorder" << std::to_string(ExprID.ComputeHash()) << ".join(res" << id << "_" << id2 << ").map(_._2)\n";
-      } else {
-        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = res" << id << "_" << id2 << "\n";
-      }
-
-      id2++;
+    if(NbOutputs == 1) {
+      // 1 output -> return the result directly
+      SPARK_FILE << "    val res" << id << " = mapres";
+    }
+    else if(NbOutputs == 2 || NbOutputs == 3) {
+      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}";
+    }
+    else {
+      // More than 3 outputs -> extract each variable from the Collection
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }";
     }
 
-    SPARK_FILE << "    val output" << id << " = ";
-    std::string sep1, sep2 = "";
-    id2 = 0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-       SPARK_FILE << sep1 << "ordered_arg" << id << "_" << id2 << sep2;
-       sep1 = ".++(";
-       sep2 = ")";
-       id2++;
-    }
+    if(isReduced)
+      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
+    else
+      SPARK_FILE << "\n";
+
+    SPARK_FILE << "    val output" << id << " = res" << id << ".reduce(Util.bitor)\n";
     SPARK_FILE << "\n";
 
     // Find the bit size of one element
@@ -485,7 +470,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
-    SPARK_FILE << "    info.indexedWrite(" << id << ", " << SizeInByte << ", output" << id << ")\n";
+    SPARK_FILE << "    fs.write(" << id << ", output" << id << ")\n";
     i++;
   }
 

@@ -656,7 +656,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
         if (verbose) llvm::errs() << " --> input";
       }
       else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(D);
         if (verbose) llvm::errs() << " --> output";
       }
       else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
@@ -672,10 +672,11 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
 
       /*FIXME: experiment without input reordering*/
+      /*
       if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue() && MapType == OMP_TGT_MAPTYPE_FROM) {
         if(verbose) llvm::errs() << "Require reordering\n";
         CGM.OpenMPSupport.getReorderMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
-      }
+      }*/
 
     }
 
@@ -1052,6 +1053,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
 
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
@@ -1086,6 +1088,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     }
   }
 
+  // Size of the outputs
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    FuncTy_args.push_back(IntTy_jint);
+  }
+
   llvm::FunctionType* FnTy = llvm::FunctionType::get(
         /*Result=*/PointerTy_jobject,
         /*Params=*/FuncTy_args,
@@ -1105,6 +1112,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
   llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
   llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
+  llvm::ConstantInt* const_int64_8 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("8"), 10));
+
+  llvm::ConstantInt* const_int64_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("4"), 10));
 
   // Global variable
   llvm::Value* const_ptr_init = CGF.Builder.CreateGlobalStringPtr("<init>", ".str.init");
@@ -1200,22 +1210,39 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
   }
 
+  // Keep values that have to be used for releasing.
+  llvm::SmallVector<llvm::Value*, 8> VecOutputsSizeInByte;
+  llvm::SmallVector<llvm::Value*, 8> VecOutputs;
+
   // Allocate output variables
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it) {
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      const VarDecl *VD = it->first;
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    const VarDecl *VD = it->first;
 
-      // Find the type of one element
-      QualType varType = VD->getType();
-      while(varType->isAnyPointerType()) {
-        varType = varType->getPointeeType();
-      }
+    QualType varType = VD->getType();
 
-      llvm::Type *TyObject_res = ConvertType(varType);
-      llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject_res);
-
-      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_res);
+    if(varType->isAnyPointerType()) {
+      varType = varType->getPointeeType();
     }
+
+    llvm::Type *TyObject_res = ConvertType(varType);
+    llvm::PointerType* PointerTy_res = llvm::PointerType::get(TyObject_res, 0);
+
+    llvm::Value *size = CGF.Builder.CreateUDiv(args, const_int32_4);
+
+    llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject_res, size);
+    llvm::AllocaInst* alloca_addr = CGF.Builder.CreateAlloca(PointerTy_res);
+
+    llvm::StoreInst* store_addr = CGF.Builder.CreateStore(alloca_res, alloca_addr);
+
+    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_addr);
+    }
+
+    args->setName("sizeOf" + VD->getName());
+
+    VecOutputsSizeInByte.push_back(args);
+    VecOutputs.push_back(alloca_res);
+    args++;
   }
 
   CGF.EmitStmt(Body);
@@ -1241,43 +1268,46 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   llvm::SmallVector<llvm::Value*, 8> results;
 
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
+  auto OutputsSizeInByte = VecOutputsSizeInByte.begin();
+  auto Outputs = VecOutputs.begin();
+
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
   {
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      const VarDecl *VD = it->first;
-      llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(*it2);
+    const VarDecl *VD = it->first;
 
-      llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_Int8, "");
-      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
-      llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
-      std::vector<llvm::Value*> ptr_277_params;
-      ptr_277_params.push_back(ptr_env);
-      ptr_277_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
-      llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-      ptr_277->setCallingConv(llvm::CallingConv::C);
-      ptr_277->setTailCall(true);
+    llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(*(it->second.begin()));
 
-      llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
-      llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-      std::vector<llvm::Value*> void_281_params;
-      void_281_params.push_back(ptr_env);
-      void_281_params.push_back(ptr_277);
-      void_281_params.push_back(const_int32_0);
-      void_281_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
-      void_281_params.push_back(ptr_273);
-      llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-      void_281->setCallingConv(llvm::CallingConv::C);
-      void_281->setTailCall(false);
+    llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(*Outputs, PointerTy_Int8, "");
+    llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
+    llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
+    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
+    std::vector<llvm::Value*> ptr_277_params;
+    ptr_277_params.push_back(ptr_env);
+    ptr_277_params.push_back(*OutputsSizeInByte);
+    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    ptr_277->setCallingConv(llvm::CallingConv::C);
+    ptr_277->setTailCall(true);
 
-      results.push_back(ptr_277);
-    }
+    llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
+    llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
+    llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
+    std::vector<llvm::Value*> void_281_params;
+    void_281_params.push_back(ptr_env);
+    void_281_params.push_back(ptr_277);
+    void_281_params.push_back(const_int32_0);
+    void_281_params.push_back(*OutputsSizeInByte);
+    void_281_params.push_back(ptr_273);
+    llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
+    void_281->setCallingConv(llvm::CallingConv::C);
+    void_281->setTailCall(false);
+
+    results.push_back(ptr_277);
+
+    OutputsSizeInByte++;
+    Outputs++;
   }
 
-  unsigned NbOutputs = 0;
-  for(auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
-    NbOutputs += it->second.size();
+  unsigned NbOutputs = OutputVarDef.size();
 
   if(NbOutputs == 1) {
     // Just return the value
