@@ -645,7 +645,7 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
       if (MapType == -1) {
         // FIXME: That should be detected before
         if (verbose) llvm::errs() << " --> assume input (not in clause)";
-        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_TO);
         MapType = CGM.OpenMPSupport.getMapType(VD);
       }
 
@@ -1154,10 +1154,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     bool isCnt = CntMap.find(VD) != CntMap.end();
     if(isCnt) {
       // FIXME: What about long ??
-      //llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(IntTy_jlong);
-      //llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-      //llvm::LoadInst* load_arg = CGF.Builder.CreateLoad(alloca_arg, "");
-
       llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
       llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
       llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
@@ -1167,14 +1163,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       }
     } else {
 
-      llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
-      llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-      llvm::LoadInst* ptr_arg = CGF.Builder.CreateLoad(alloca_arg, "");
-
       // GetByteArrayElements
       std::vector<llvm::Value*> ptr_load_arg_params;
       ptr_load_arg_params.push_back(ptr_env);
-      ptr_load_arg_params.push_back(ptr_arg);
+      ptr_load_arg_params.push_back(args);
       ptr_load_arg_params.push_back(const_ptr_null);
       llvm::CallInst* ptr_load_arg = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
       ptr_load_arg->setCallingConv(llvm::CallingConv::C);
@@ -1182,7 +1174,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
       args->setName(VD->getName());
 
-      VecPtrBarrays.push_back(ptr_arg);
+      VecPtrBarrays.push_back(args);
       VecPtrValues.push_back(ptr_load_arg);
 
       QualType varType = VD->getType();
@@ -1267,6 +1259,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
 
   for (auto ptrBarray = VecPtrBarrays.begin(); ptrBarray != VecPtrBarrays.end(); ++ptrBarray){
+    // ReleaseByteArrayElements
     std::vector<llvm::Value*> void_272_params;
     void_272_params.push_back(ptr_env);
     void_272_params.push_back(*ptrBarray);
@@ -1286,6 +1279,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   for (auto outBarrays = VecOutBarrays.begin(); outBarrays != VecOutBarrays.end(); ++outBarrays)
   {
+    // ReleaseByteArrayElements
     std::vector<llvm::Value*> void_272_params;
     void_272_params.push_back(ptr_env);
     void_272_params.push_back(*outBarrays);
