@@ -247,6 +247,15 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
   }
 
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+  {
+    int id = IndexMap[it->first];
+
+    SPARK_FILE << "val size" << id << " = ";
+    SPARK_FILE << "at.get(" << id << ")";
+    SPARK_FILE << " // Variable " << (it->first)->getName() <<"\n";
+  }
+
   SPARK_FILE << "\n";
   SPARK_FILE << "    // Generate RDDs of index\n";
   int NbIndex = 0;
@@ -418,7 +427,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
     for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
     {
       int id = IndexMap[it->first];
-      SPARK_FILE << ", at.get(" << id << ")";
+      SPARK_FILE << ", size" << id;
     }
 
     SPARK_FILE << ") }\n\n";

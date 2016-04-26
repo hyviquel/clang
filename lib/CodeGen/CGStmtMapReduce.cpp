@@ -1116,6 +1116,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   llvm::ConstantInt* const_int64_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("4"), 10));
 
+
+  llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
+
   // Global variable
   llvm::Value* const_ptr_init = CGF.Builder.CreateGlobalStringPtr("<init>", ".str.init");
   llvm::Value* const_ptr_tuple2 = CGF.Builder.CreateGlobalStringPtr("scala/Tuple2", ".str.tuple2");
@@ -1168,8 +1171,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
       llvm::LoadInst* ptr_arg = CGF.Builder.CreateLoad(alloca_arg, "");
 
-      llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
-
+      // GetByteArrayElements
       std::vector<llvm::Value*> ptr_load_arg_params;
       ptr_load_arg_params.push_back(ptr_env);
       ptr_load_arg_params.push_back(ptr_arg);
@@ -1210,8 +1212,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Keep values that have to be used for releasing.
-  llvm::SmallVector<llvm::Value*, 8> VecOutputsSizeInByte;
-  llvm::SmallVector<llvm::Value*, 8> VecOutputs;
+  llvm::SmallVector<llvm::Value*, 8> VecOutBarrays;
+  llvm::SmallVector<llvm::Value*, 8> VecOutValues;
 
   // Allocate output variables
   for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
@@ -1219,8 +1221,26 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     QualType varType = VD->getType();
     llvm::Type *TyObject_res = ConvertType(varType);
-    llvm::AllocaInst *alloca_res = CGF.Builder.CreateAlloca(CGF.Builder.getInt8Ty(), args);
+    //llvm::AllocaInst *alloca_res = CGF.Builder.CreateAlloca(CGF.Builder.getInt8Ty(), args);
 
+    // NewByteArray
+    llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
+    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
+    std::vector<llvm::Value*> ptr_277_params;
+    ptr_277_params.push_back(ptr_env);
+    ptr_277_params.push_back(args);
+    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    ptr_277->setCallingConv(llvm::CallingConv::C);
+    ptr_277->setTailCall(true);
+
+    // GetByteArrayElements
+    std::vector<llvm::Value*> ptr_load_arg_params;
+    ptr_load_arg_params.push_back(ptr_env);
+    ptr_load_arg_params.push_back(ptr_277);
+    ptr_load_arg_params.push_back(const_ptr_null);
+    llvm::CallInst* alloca_res = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
+    alloca_res->setCallingConv(llvm::CallingConv::C);
+    alloca_res->setTailCall(false);
 
     CGF.Builder.CreateMemSet(alloca_res, CGF.Builder.getInt8(0), args, 1);
 
@@ -1234,8 +1254,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     args->setName("sizeOf" + VD->getName());
 
-    VecOutputsSizeInByte.push_back(args);
-    VecOutputs.push_back(alloca_res);
+    VecOutBarrays.push_back(ptr_277);
+    VecOutValues.push_back(alloca_res);
     args++;
   }
 
@@ -1261,40 +1281,23 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   llvm::SmallVector<llvm::Value*, 8> results;
 
-  auto OutputsSizeInByte = VecOutputsSizeInByte.begin();
-  auto Outputs = VecOutputs.begin();
 
-  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+  auto OutValues = VecOutValues.begin();
+
+  for (auto outBarrays = VecOutBarrays.begin(); outBarrays != VecOutBarrays.end(); ++outBarrays)
   {
-    const VarDecl *VD = it->first;
+    std::vector<llvm::Value*> void_272_params;
+    void_272_params.push_back(ptr_env);
+    void_272_params.push_back(*outBarrays);
+    void_272_params.push_back(*OutValues);
+    void_272_params.push_back(const_int32_0);
+    llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
+    void_272->setCallingConv(llvm::CallingConv::C);
+    void_272->setTailCall(true);
 
-    llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(*(it->second.begin()));
+    results.push_back(*outBarrays);
 
-    llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
-    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
-    std::vector<llvm::Value*> ptr_277_params;
-    ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(*OutputsSizeInByte);
-    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-    ptr_277->setCallingConv(llvm::CallingConv::C);
-    ptr_277->setTailCall(true);
-
-    llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 208);
-    llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-    std::vector<llvm::Value*> void_281_params;
-    void_281_params.push_back(ptr_env);
-    void_281_params.push_back(ptr_277);
-    void_281_params.push_back(const_int32_0);
-    void_281_params.push_back(*OutputsSizeInByte);
-    void_281_params.push_back(*Outputs);
-    llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-    void_281->setCallingConv(llvm::CallingConv::C);
-    void_281->setTailCall(false);
-
-    results.push_back(ptr_277);
-
-    OutputsSizeInByte++;
-    Outputs++;
+    OutValues++;
   }
 
   unsigned NbOutputs = OutputVarDef.size();
