@@ -660,8 +660,8 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
         if (verbose) llvm::errs() << " --> output";
       }
       else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-        if (verbose) llvm::errs() << " --> both input/output not supported";
-        exit(1);
+        CGM.OpenMPSupport.getOffloadingInputOutputVarUse()[VD].push_back(D);
+        if (verbose) llvm::errs() << " --> both input/output";
       } else {
         if (verbose) llvm::errs() << " --> euuh something not supported";
         exit(1);
@@ -1053,6 +1053,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
 
   // Create the mapping function
@@ -1080,6 +1081,15 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   FuncTy_args.push_back(PointerTy_jobject);
 
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      FuncTy_args.push_back(IntTy_jlong);
+    } else {
+      FuncTy_args.push_back(PointerTy_jobject);
+    }
+  }
+
+  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it) {
     bool isCnt = CntMap.find(it->first) != CntMap.end();
     if(isCnt) {
       FuncTy_args.push_back(IntTy_jlong);
@@ -1207,6 +1217,62 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::SmallVector<llvm::Value*, 8> VecOutBarrays;
   llvm::SmallVector<llvm::Value*, 8> VecOutValues;
 
+  // Allocate, load and cast input/output variables (i.e. the arguments)
+  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it){
+    const VarDecl *VD = it->first;
+
+    bool isCnt = CntMap.find(VD) != CntMap.end();
+    if(isCnt) {
+      // FIXME: What about long ??
+      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
+      }
+    } else {
+
+      // GetByteArrayElements
+      std::vector<llvm::Value*> ptr_load_arg_params;
+      ptr_load_arg_params.push_back(ptr_env);
+      ptr_load_arg_params.push_back(args);
+      ptr_load_arg_params.push_back(const_ptr_null);
+      llvm::CallInst* ptr_load_arg = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
+      ptr_load_arg->setCallingConv(llvm::CallingConv::C);
+      ptr_load_arg->setTailCall(false);
+
+      args->setName(VD->getName());
+
+      VecOutBarrays.push_back(args);
+      VecOutValues.push_back(ptr_load_arg);
+
+      QualType varType = VD->getType();
+      llvm::Type *TyObject_arg = ConvertType(varType);
+
+      llvm::Value *valuePtr;
+
+      if(!varType->isAnyPointerType()) {
+        if(verbose) llvm::errs() << ">Test< " << VD->getName() << " is scalar\n";
+
+        llvm::PointerType* PointerTy_arg = llvm::PointerType::get(TyObject_arg, 0);
+        valuePtr =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+
+      } else {
+        llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
+
+        valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
+        llvm::StoreInst* store_test = CGF.Builder.CreateStore(ptr_265, valuePtr);
+      }
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, valuePtr);
+      }
+    }
+
+    args++;
+  }
+
   // Allocate output variables
   for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
     const VarDecl *VD = it->first;
@@ -1294,7 +1360,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     OutValues++;
   }
 
-  unsigned NbOutputs = OutputVarDef.size();
+  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
 
   if(NbOutputs == 1) {
     // Just return the value
