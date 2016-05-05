@@ -1272,10 +1272,10 @@ public:
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsIndex;
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsType;
       llvm::SmallSet<const VarDecl *, 16> OffloadingInputs;
+      llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputOutputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingOutputVarDef;
-      llvm::DenseMap<const VarDecl*, unsigned> OffloadingInputReorderNb;
-      llvm::DenseMap<const VarDecl*, unsigned> OffloadingOutputReorderNb;
+      llvm::DenseMap<const VarDecl*, unsigned> OffloadingInputStyle;
       llvm::DenseMap<const Expr*, const Expr*> ReorderMap;
       llvm::DenseMap<unsigned, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>>> ReorderInputVarUse;
       llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  OffloadingCounterInfo;
@@ -1471,17 +1471,17 @@ public:
     llvm::SmallSet<const VarDecl*, 16> &getOffloadingInputs() {
       return OpenMPStack.back().OffloadingInputs;
     }
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingInputOutputVarUse() {
+      return OpenMPStack.back().OffloadingInputOutputVarUse;
+    }
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingInputVarUse() {
       return OpenMPStack.back().OffloadingInputVarUse;
     }
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingOutputVarDef() {
       return OpenMPStack.back().OffloadingOutputVarDef;
     }
-    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingInputReorderNb() {
-      return OpenMPStack.back().OffloadingInputReorderNb;
-    }
-    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingOutputReorderNb() {
-      return OpenMPStack.back().OffloadingOutputReorderNb;
+    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingInputStyle() {
+      return OpenMPStack.back().OffloadingInputStyle;
     }
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>> &getOffloadingCounterInfo() {
       return OpenMPStack.back().OffloadingCounterInfo;

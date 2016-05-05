@@ -67,7 +67,9 @@ void CodeGenFunction::EmitSparkJob() {
 
   SPARK_FILE << "  def main(args: Array[String]) {\n"
              << "    \n"
-             << "    val info = new CloudInfo(args(0), args(1), args(2), args(3))\n"
+             << "    val fs = CloudFileSystem.create(args(0), args(1), args(2), args(3))\n"
+             << "    val at = AddressTable.create(fs)\n"
+             << "    val info = new CloudInfo(fs, at)\n"
              << "    \n";
 
   EmitSparkInput(SPARK_FILE);
@@ -86,6 +88,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   bool verbose = VERBOSE;
 
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
@@ -93,22 +96,45 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
-  unsigned NbInputs = 0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-    NbInputs += it->second.size();
-  // Outputs are reorder a posteriori
-  unsigned NbOutputs = 0;
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-    NbOutputs += it->second.size();
+  int i;
+
+  unsigned NbInputs = InputVarUse.size() + InputOutputVarUse.size();
+  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
+  unsigned NbOutputSize = OutputVarDef.size();
 
   if(verbose) llvm::errs() << "NbInput => " << NbInputs << "\n";
   if(verbose) llvm::errs() << "NbOutput => " << NbOutputs << "\n";
   SPARK_FILE << "\n";
   SPARK_FILE << "import org.apache.spark.SparkFiles\n";
   SPARK_FILE << "class OmpKernel {\n";
-  SPARK_FILE << "  @native def mappingMethod(n0 : Array[Byte]";
-  for(unsigned i = 1; i<NbInputs; i++)
-    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << "  @native def mappingMethod(";
+  i=0;
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
+    // Separator
+    if(it != InputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
+  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it, i++) {
+    // Separator
+    if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
+  for(unsigned j = 0; j<NbOutputSize; j++, i++)
+    SPARK_FILE << ", n" << i << ": Int";
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -119,9 +145,34 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "]";
   }
   SPARK_FILE << "\n";
-  SPARK_FILE << "  def mappingWrapper(n0 : Array[Byte]";
-  for(unsigned i = 1; i<NbInputs; i++)
-    SPARK_FILE << ", n" << i << " : Array[Byte]";
+  SPARK_FILE << "  def mappingWrapper(";
+  i=0;
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
+    // Separator
+    if(it != InputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
+  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it, i++) {
+    // Separator
+    if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
+      SPARK_FILE << ", ";
+
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      SPARK_FILE << "n" << i << ": Long";
+    } else {
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
+  }
+  for(unsigned j = 0; j<NbOutputSize; j++, i++)
+    SPARK_FILE << ", n" << i << ": Int";
   SPARK_FILE << ") : ";
   if (NbOutputs == 1)
     SPARK_FILE << "Array[Byte]";
@@ -134,7 +185,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << " = {\n";
   SPARK_FILE << "    NativeKernels.loadOnce()\n";
   SPARK_FILE << "    return mappingMethod(n0";
-  for(unsigned i = 1; i<NbInputs; i++)
+  for(unsigned i = 1; i<NbInputs+NbOutputSize; i++)
     SPARK_FILE << ", n" << i;
   SPARK_FILE << ")\n";
   SPARK_FILE << "  }\n\n";
@@ -194,22 +245,20 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& InputReorderNb = CGM.OpenMPSupport.getOffloadingInputReorderNb();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
   auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
-  auto& InputsSet = CGM.OpenMPSupport.getOffloadingInputs();
 
   SPARK_FILE << "    // Read each input from HDFS and store them in RDDs\n";
-  for (auto it = InputsSet.begin(); it != InputsSet.end(); ++it)
+  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
   {
-    int id = IndexMap[*it];
+    int id = IndexMap[it->first];
 
     // Find the bit size of one element
-    QualType varType = (*it)->getType();
-    bool isRDD = varType->isAnyPointerType();
+    QualType varType = it->first->getType();
 
     while(varType->isAnyPointerType()) {
       varType = varType->getPointeeType();
@@ -217,11 +266,34 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
     SPARK_FILE << "    val arg" << id << " = ";
-    if(isRDD)
-      SPARK_FILE << "info.indexedRead(" << id << ", " << SizeInByte << ")";
-    else
-      SPARK_FILE << "info.read(" << id << ", " << SizeInByte << ")";
-    SPARK_FILE << " // Variable " << (*it)->getName() <<"\n";
+    SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
+    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
+  }
+
+  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
+  {
+    int id = IndexMap[it->first];
+
+    // Find the bit size of one element
+    QualType varType = it->first->getType();
+
+    while(varType->isAnyPointerType()) {
+      varType = varType->getPointeeType();
+    }
+    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
+
+    SPARK_FILE << "    val arg" << id << " = ";
+    SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
+    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
+  }
+
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+  {
+    int id = IndexMap[it->first];
+
+    SPARK_FILE << "val size" << id << " = ";
+    SPARK_FILE << "at.get(" << id << ")";
+    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
   }
 
   SPARK_FILE << "\n";
@@ -257,7 +329,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   for(int i=1; i<NbIndex; i++) {
     SPARK_FILE << ".cartesian(index" << i << ")";
   }
-  SPARK_FILE << ".zipWithIndex().map{case (x,y) => (y,x)}\n"; // FIXME: Inverse with more indexes
+  SPARK_FILE << "\n"; // FIXME: Inverse with more indexes
 
   SPARK_FILE << "\n";
   SPARK_FILE << "    // Create RDDs containing reordered indexes\n";
@@ -309,6 +381,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   }
 
   SPARK_FILE << "    \n";
+
+  /*
   SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
   SPARK_FILE << "    var mapargs = ";
 
@@ -347,13 +421,18 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       }
     }
   }
+  */
   SPARK_FILE << "\n\n";
 }
 
 void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+
+  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
 
   unsigned NbInputs = 0;
   for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
@@ -361,28 +440,54 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = mapargs.mapValues{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    var mapres = index.map{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = mapargs.mapValues{ x => new OmpKernel().mappingWrapper(";
+    SPARK_FILE << "    var mapres = index.map{ x => new OmpKernel().mappingWrapper(";
 
     // Assign each argument according to its type
     int i=1;
     for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
     {
-      bool isRDD = it->first->getType()->isAnyPointerType();
+      bool isCnt = CntMap.find(it->first) != CntMap.end();
 
-      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        // Separator
-        if(it != InputVarUse.begin() || it2 != it->second.begin())
-          SPARK_FILE << ", ";
-        if(isRDD) {
+      // Separator
+      if(it != InputVarUse.begin())
+        SPARK_FILE << ", ";
+      if(isCnt) {
+        if(CntMap.size() == 1) {
+          SPARK_FILE << "x";
+        } else {
           SPARK_FILE << "x._" << i;
           i++;
-        } else {
-          int id = IndexMap[it->first];
-          SPARK_FILE << "arg" << id;
         }
+      } else {
+        int id = IndexMap[it->first];
+        SPARK_FILE << "arg" << id;
       }
+    }
+    for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
+    {
+      bool isCnt = CntMap.find(it->first) != CntMap.end();
+
+      // Separator
+      if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
+        SPARK_FILE << ", ";
+      if(isCnt) {
+        if(CntMap.size() == 1) {
+          SPARK_FILE << "x";
+        } else {
+          SPARK_FILE << "x._" << i;
+          i++;
+        }
+      } else {
+        int id = IndexMap[it->first];
+        SPARK_FILE << "arg" << id;
+      }
+    }
+    for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+    {
+      int id = IndexMap[it->first];
+      SPARK_FILE << ", size" << id;
     }
 
     SPARK_FILE << ") }\n\n";
@@ -391,12 +496,11 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
-  unsigned NbOutputs = 0;
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-    NbOutputs += it->second.size();
+  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
 
   SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
   int i=0;
@@ -407,45 +511,25 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     int id2 = 0;
     bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
 
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(NbOutputs == 1) {
-        // 1 output -> return the result directly
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres";
-      }
-      else if(NbOutputs == 2 || NbOutputs == 3) {
-        // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x._" << i+1 << "}";
-      }
-      else {
-        // More than 3 outputs -> extract each variable from the Collection
-        SPARK_FILE << "    val res" << id << "_" << id2 << " = mapres.mapValues { x => x(" << i << ") }";
-      }
-
-      if(isReduced)
-        SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
-      else
-        SPARK_FILE << "\n";
-
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = reorder" << std::to_string(ExprID.ComputeHash()) << ".join(res" << id << "_" << id2 << ").map(_._2)\n";
-      } else {
-        SPARK_FILE << "    val ordered_arg" << id << "_" << id2 << " = res" << id << "_" << id2 << "\n";
-      }
-
-      id2++;
+    if(NbOutputs == 1) {
+      // 1 output -> return the result directly
+      SPARK_FILE << "    val res" << id << " = mapres";
+    }
+    else if(NbOutputs == 2 || NbOutputs == 3) {
+      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}";
+    }
+    else {
+      // More than 3 outputs -> extract each variable from the Collection
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }";
     }
 
-    SPARK_FILE << "    val output" << id << " = ";
-    std::string sep1, sep2 = "";
-    id2 = 0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-       SPARK_FILE << sep1 << "ordered_arg" << id << "_" << id2 << sep2;
-       sep1 = ".++(";
-       sep2 = ")";
-       id2++;
-    }
+    if(isReduced)
+      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
+    else
+      SPARK_FILE << "\n";
+
+    SPARK_FILE << "    val output" << id << " = res" << id << ".reduce(Util.bitor)\n";
     SPARK_FILE << "\n";
 
     // Find the bit size of one element
@@ -456,8 +540,48 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
-    SPARK_FILE << "    info.indexedWrite(" << id << ", " << SizeInByte << ", output" << id << ")\n";
+    SPARK_FILE << "    fs.write(" << id << ", output" << id << ")\n";
     i++;
   }
+
+  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
+  {
+    int id = IndexMap[it->first];
+    int id2 = 0;
+    bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
+
+    if(NbOutputs == 1) {
+      // 1 output -> return the result directly
+      SPARK_FILE << "    val res" << id << " = mapres";
+    }
+    else if(NbOutputs == 2 || NbOutputs == 3) {
+      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}";
+    }
+    else {
+      // More than 3 outputs -> extract each variable from the Collection
+      SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }";
+    }
+
+    if(isReduced)
+      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
+    else
+      SPARK_FILE << "\n";
+
+    SPARK_FILE << "    val output" << id << " = res" << id << ".reduce(Util.bitor)\n";
+    SPARK_FILE << "\n";
+
+    // Find the bit size of one element
+    QualType varType = it->first->getType();
+
+    while(varType->isAnyPointerType()) {
+      varType = varType->getPointeeType();
+    }
+    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
+
+    SPARK_FILE << "    fs.write(" << id << ", output" << id << ")\n";
+    i++;
+  }
+
 
 }

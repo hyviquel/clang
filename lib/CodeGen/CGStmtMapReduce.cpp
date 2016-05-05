@@ -53,271 +53,271 @@ Expr *CodeGenFunction::ActOnIntegerConstant(SourceLocation Loc, uint64_t Val) {
 
 
 namespace {
-class ForInitChecker : public StmtVisitor<ForInitChecker, Decl *> {
-  class ForInitVarChecker : public StmtVisitor<ForInitVarChecker, Decl *> {
+  class ForInitChecker : public StmtVisitor<ForInitChecker, Decl *> {
+    class ForInitVarChecker : public StmtVisitor<ForInitVarChecker, Decl *> {
+    public:
+      VarDecl *VisitDeclRefExpr(DeclRefExpr *E) {
+        return dyn_cast_or_null<VarDecl>(E->getDecl());
+      }
+      Decl *VisitStmt(Stmt *S) { return 0; }
+      ForInitVarChecker() {}
+    } VarChecker;
+    Expr *InitValue;
+
   public:
-    VarDecl *VisitDeclRefExpr(DeclRefExpr *E) {
-      return dyn_cast_or_null<VarDecl>(E->getDecl());
+    Decl *VisitBinaryOperator(BinaryOperator *BO) {
+      if (BO->getOpcode() != BO_Assign)
+        return 0;
+
+      InitValue = BO->getRHS();
+      return VarChecker.Visit(BO->getLHS());
+    }
+    Decl *VisitDeclStmt(DeclStmt *S) {
+      if (S->isSingleDecl()) {
+        VarDecl *Var = dyn_cast_or_null<VarDecl>(S->getSingleDecl());
+        if (Var && Var->hasInit()) {
+          if (CXXConstructExpr *Init =
+              dyn_cast<CXXConstructExpr>(Var->getInit())) {
+            if (Init->getNumArgs() != 1)
+              return 0;
+            InitValue = Init->getArg(0);
+          } else {
+            InitValue = Var->getInit();
+          }
+          return Var;
+        }
+      }
+      return 0;
+    }
+    Decl *VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+      switch (E->getOperator()) {
+        case OO_Equal:
+          InitValue = E->getArg(1);
+          return VarChecker.Visit(E->getArg(0));
+        default:
+          break;
+      }
+      return 0;
     }
     Decl *VisitStmt(Stmt *S) { return 0; }
-    ForInitVarChecker() {}
-  } VarChecker;
-  Expr *InitValue;
+    ForInitChecker() : VarChecker(), InitValue(0) {}
+    Expr *getInitValue() { return InitValue; }
+  };
 
-public:
-  Decl *VisitBinaryOperator(BinaryOperator *BO) {
-    if (BO->getOpcode() != BO_Assign)
-      return 0;
+  class ForVarChecker : public StmtVisitor<ForVarChecker, bool> {
+    Decl *InitVar;
 
-    InitValue = BO->getRHS();
-    return VarChecker.Visit(BO->getLHS());
-  }
-  Decl *VisitDeclStmt(DeclStmt *S) {
-    if (S->isSingleDecl()) {
-      VarDecl *Var = dyn_cast_or_null<VarDecl>(S->getSingleDecl());
-      if (Var && Var->hasInit()) {
-        if (CXXConstructExpr *Init =
-                dyn_cast<CXXConstructExpr>(Var->getInit())) {
-          if (Init->getNumArgs() != 1)
-            return 0;
-          InitValue = Init->getArg(0);
-        } else {
-          InitValue = Var->getInit();
-        }
-        return Var;
-      }
+  public:
+    bool VisitDeclRefExpr(DeclRefExpr *E) { return E->getDecl() == InitVar; }
+    bool VisitImplicitCastExpr(ImplicitCastExpr *E) {
+      return Visit(E->getSubExpr());
     }
-    return 0;
-  }
-  Decl *VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
-    switch (E->getOperator()) {
-    case OO_Equal:
-      InitValue = E->getArg(1);
-      return VarChecker.Visit(E->getArg(0));
-    default:
-      break;
-    }
-    return 0;
-  }
-  Decl *VisitStmt(Stmt *S) { return 0; }
-  ForInitChecker() : VarChecker(), InitValue(0) {}
-  Expr *getInitValue() { return InitValue; }
-};
+    bool VisitStmt(Stmt *S) { return false; }
+    ForVarChecker(Decl *D) : InitVar(D) {}
+  };
 
-class ForVarChecker : public StmtVisitor<ForVarChecker, bool> {
-  Decl *InitVar;
-
-public:
-  bool VisitDeclRefExpr(DeclRefExpr *E) { return E->getDecl() == InitVar; }
-  bool VisitImplicitCastExpr(ImplicitCastExpr *E) {
-    return Visit(E->getSubExpr());
-  }
-  bool VisitStmt(Stmt *S) { return false; }
-  ForVarChecker(Decl *D) : InitVar(D) {}
-};
-
-class ForTestChecker : public StmtVisitor<ForTestChecker, bool> {
-  ForVarChecker VarChecker;
-  Expr *CheckValue;
-  bool IsLessOp;
-  bool IsStrictOp;
-
-public:
-  bool VisitBinaryOperator(BinaryOperator *BO) {
-    if (!BO->isRelationalOp())
-      return false;
-    if (VarChecker.Visit(BO->getLHS())) {
-      CheckValue = BO->getRHS();
-      IsLessOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_LE;
-      IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
-    } else if (VarChecker.Visit(BO->getRHS())) {
-      CheckValue = BO->getLHS();
-      IsLessOp = BO->getOpcode() == BO_GT || BO->getOpcode() == BO_GE;
-      IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
-    }
-    return CheckValue != 0;
-  }
-  bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
-    switch (E->getOperator()) {
-    case OO_Greater:
-    case OO_GreaterEqual:
-    case OO_Less:
-    case OO_LessEqual:
-      break;
-    default:
-      return false;
-    }
-    if (E->getNumArgs() != 2)
-      return false;
-
-    if (VarChecker.Visit(E->getArg(0))) {
-      CheckValue = E->getArg(1);
-      IsLessOp =
-          E->getOperator() == OO_Less || E->getOperator() == OO_LessEqual;
-      IsStrictOp = E->getOperator() == OO_Less;
-    } else if (VarChecker.Visit(E->getArg(1))) {
-      CheckValue = E->getArg(0);
-      IsLessOp =
-          E->getOperator() == OO_Greater || E->getOperator() == OO_GreaterEqual;
-      IsStrictOp = E->getOperator() == OO_Greater;
-    }
-
-    return CheckValue != 0;
-  }
-  bool VisitStmt(Stmt *S) { return false; }
-  ForTestChecker(Decl *D)
-      : VarChecker(D), CheckValue(0), IsLessOp(false), IsStrictOp(false) {}
-  Expr *getCheckValue() { return CheckValue; }
-  bool isLessOp() const { return IsLessOp; }
-  bool isStrictOp() const { return IsStrictOp; }
-};
-
-class ForIncrChecker : public StmtVisitor<ForIncrChecker, bool> {
-  ForVarChecker VarChecker;
-  class ForIncrExprChecker : public StmtVisitor<ForIncrExprChecker, bool> {
+  class ForTestChecker : public StmtVisitor<ForTestChecker, bool> {
     ForVarChecker VarChecker;
-    Expr *StepValue;
-    bool IsIncrement;
+    Expr *CheckValue;
+    bool IsLessOp;
+    bool IsStrictOp;
 
   public:
     bool VisitBinaryOperator(BinaryOperator *BO) {
-      if (!BO->isAdditiveOp())
+      if (!BO->isRelationalOp())
         return false;
-      if (BO->getOpcode() == BO_Add) {
-        IsIncrement = true;
-        if (VarChecker.Visit(BO->getLHS()))
-          StepValue = BO->getRHS();
-        else if (VarChecker.Visit(BO->getRHS()))
-          StepValue = BO->getLHS();
-        return StepValue != 0;
+      if (VarChecker.Visit(BO->getLHS())) {
+        CheckValue = BO->getRHS();
+        IsLessOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_LE;
+        IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
+      } else if (VarChecker.Visit(BO->getRHS())) {
+        CheckValue = BO->getLHS();
+        IsLessOp = BO->getOpcode() == BO_GT || BO->getOpcode() == BO_GE;
+        IsStrictOp = BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT;
       }
-      // BO_Sub
-      if (VarChecker.Visit(BO->getLHS()))
-        StepValue = BO->getRHS();
-      return StepValue != 0;
+      return CheckValue != 0;
     }
     bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
       switch (E->getOperator()) {
-      case OO_Plus:
-        IsIncrement = true;
-        if (VarChecker.Visit(E->getArg(0)))
-          StepValue = E->getArg(1);
-        else if (VarChecker.Visit(E->getArg(1)))
-          StepValue = E->getArg(0);
-        return StepValue != 0;
-      case OO_Minus:
-        if (VarChecker.Visit(E->getArg(0)))
-          StepValue = E->getArg(1);
-        return StepValue != 0;
-      default:
-        return false;
+        case OO_Greater:
+        case OO_GreaterEqual:
+        case OO_Less:
+        case OO_LessEqual:
+          break;
+        default:
+          return false;
       }
+      if (E->getNumArgs() != 2)
+        return false;
+
+      if (VarChecker.Visit(E->getArg(0))) {
+        CheckValue = E->getArg(1);
+        IsLessOp =
+            E->getOperator() == OO_Less || E->getOperator() == OO_LessEqual;
+        IsStrictOp = E->getOperator() == OO_Less;
+      } else if (VarChecker.Visit(E->getArg(1))) {
+        CheckValue = E->getArg(0);
+        IsLessOp =
+            E->getOperator() == OO_Greater || E->getOperator() == OO_GreaterEqual;
+        IsStrictOp = E->getOperator() == OO_Greater;
+      }
+
+      return CheckValue != 0;
     }
     bool VisitStmt(Stmt *S) { return false; }
-    ForIncrExprChecker(ForVarChecker &C)
-        : VarChecker(C), StepValue(0), IsIncrement(false) {}
-    Expr *getStepValue() { return StepValue; }
-    bool isIncrement() const { return IsIncrement; }
-  } ExprChecker;
-  Expr *StepValue;
-  CodeGenFunction &Actions;
-  bool IsLessOp, IsCompatibleWithTest;
+    ForTestChecker(Decl *D)
+      : VarChecker(D), CheckValue(0), IsLessOp(false), IsStrictOp(false) {}
+    Expr *getCheckValue() { return CheckValue; }
+    bool isLessOp() const { return IsLessOp; }
+    bool isStrictOp() const { return IsStrictOp; }
+  };
 
-public:
-  bool VisitUnaryOperator(UnaryOperator *UO) {
-    if (!UO->isIncrementDecrementOp())
-      return false;
-    if (VarChecker.Visit(UO->getSubExpr())) {
-      IsCompatibleWithTest = (IsLessOp && UO->isIncrementOp()) ||
-                             (!IsLessOp && UO->isDecrementOp());
-      if (!IsCompatibleWithTest && IsLessOp)
-        StepValue = Actions.ActOnIntegerConstant(SourceLocation(), -1);
-      else
-        StepValue = Actions.ActOnIntegerConstant(SourceLocation(), 1);
-    }
-    return StepValue != 0;
-  }
-  bool VisitBinaryOperator(BinaryOperator *BO) {
-    IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
-                           (!IsLessOp && BO->getOpcode() == BO_SubAssign);
-    switch (BO->getOpcode()) {
-    case BO_AddAssign:
-    case BO_SubAssign:
-      if (VarChecker.Visit(BO->getLHS())) {
-        StepValue = BO->getRHS();
-        IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
-                               (!IsLessOp && BO->getOpcode() == BO_SubAssign);
+  class ForIncrChecker : public StmtVisitor<ForIncrChecker, bool> {
+    ForVarChecker VarChecker;
+    class ForIncrExprChecker : public StmtVisitor<ForIncrExprChecker, bool> {
+      ForVarChecker VarChecker;
+      Expr *StepValue;
+      bool IsIncrement;
+
+    public:
+      bool VisitBinaryOperator(BinaryOperator *BO) {
+        if (!BO->isAdditiveOp())
+          return false;
+        if (BO->getOpcode() == BO_Add) {
+          IsIncrement = true;
+          if (VarChecker.Visit(BO->getLHS()))
+            StepValue = BO->getRHS();
+          else if (VarChecker.Visit(BO->getRHS()))
+            StepValue = BO->getLHS();
+          return StepValue != 0;
+        }
+        // BO_Sub
+        if (VarChecker.Visit(BO->getLHS()))
+          StepValue = BO->getRHS();
+        return StepValue != 0;
       }
-      return StepValue != 0;
-    case BO_Assign:
-      if (VarChecker.Visit(BO->getLHS()) && ExprChecker.Visit(BO->getRHS())) {
-        StepValue = ExprChecker.getStepValue();
-        IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
+      bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+        switch (E->getOperator()) {
+          case OO_Plus:
+            IsIncrement = true;
+            if (VarChecker.Visit(E->getArg(0)))
+              StepValue = E->getArg(1);
+            else if (VarChecker.Visit(E->getArg(1)))
+              StepValue = E->getArg(0);
+            return StepValue != 0;
+          case OO_Minus:
+            if (VarChecker.Visit(E->getArg(0)))
+              StepValue = E->getArg(1);
+            return StepValue != 0;
+          default:
+            return false;
+        }
       }
-      return StepValue != 0;
-    default:
-      break;
-    }
-    return false;
-  }
-  bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
-    switch (E->getOperator()) {
-    case OO_PlusPlus:
-    case OO_MinusMinus:
-      if (VarChecker.Visit(E->getArg(0))) {
-        IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusPlus) ||
-                               (!IsLessOp && E->getOperator() == OO_MinusMinus);
+      bool VisitStmt(Stmt *S) { return false; }
+      ForIncrExprChecker(ForVarChecker &C)
+        : VarChecker(C), StepValue(0), IsIncrement(false) {}
+      Expr *getStepValue() { return StepValue; }
+      bool isIncrement() const { return IsIncrement; }
+    } ExprChecker;
+    Expr *StepValue;
+    CodeGenFunction &Actions;
+    bool IsLessOp, IsCompatibleWithTest;
+
+  public:
+    bool VisitUnaryOperator(UnaryOperator *UO) {
+      if (!UO->isIncrementDecrementOp())
+        return false;
+      if (VarChecker.Visit(UO->getSubExpr())) {
+        IsCompatibleWithTest = (IsLessOp && UO->isIncrementOp()) ||
+            (!IsLessOp && UO->isDecrementOp());
         if (!IsCompatibleWithTest && IsLessOp)
           StepValue = Actions.ActOnIntegerConstant(SourceLocation(), -1);
         else
           StepValue = Actions.ActOnIntegerConstant(SourceLocation(), 1);
       }
       return StepValue != 0;
-    case OO_PlusEqual:
-    case OO_MinusEqual:
-      if (VarChecker.Visit(E->getArg(0))) {
-        StepValue = E->getArg(1);
-        IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusEqual) ||
-                               (!IsLessOp && E->getOperator() == OO_MinusEqual);
-      }
-      return StepValue != 0;
-    case OO_Equal:
-      if (VarChecker.Visit(E->getArg(0)) && ExprChecker.Visit(E->getArg(1))) {
-        StepValue = ExprChecker.getStepValue();
-        IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
-      }
-      return StepValue != 0;
-    default:
-      break;
     }
-    return false;
-  }
-  bool VisitStmt(Stmt *S) { return false; }
-  ForIncrChecker(Decl *D, CodeGenFunction &S, bool LessOp)
+    bool VisitBinaryOperator(BinaryOperator *BO) {
+      IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
+          (!IsLessOp && BO->getOpcode() == BO_SubAssign);
+      switch (BO->getOpcode()) {
+        case BO_AddAssign:
+        case BO_SubAssign:
+          if (VarChecker.Visit(BO->getLHS())) {
+            StepValue = BO->getRHS();
+            IsCompatibleWithTest = (IsLessOp && BO->getOpcode() == BO_AddAssign) ||
+                (!IsLessOp && BO->getOpcode() == BO_SubAssign);
+          }
+          return StepValue != 0;
+        case BO_Assign:
+          if (VarChecker.Visit(BO->getLHS()) && ExprChecker.Visit(BO->getRHS())) {
+            StepValue = ExprChecker.getStepValue();
+            IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
+          }
+          return StepValue != 0;
+        default:
+          break;
+      }
+      return false;
+    }
+    bool VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
+      switch (E->getOperator()) {
+        case OO_PlusPlus:
+        case OO_MinusMinus:
+          if (VarChecker.Visit(E->getArg(0))) {
+            IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusPlus) ||
+                (!IsLessOp && E->getOperator() == OO_MinusMinus);
+            if (!IsCompatibleWithTest && IsLessOp)
+              StepValue = Actions.ActOnIntegerConstant(SourceLocation(), -1);
+            else
+              StepValue = Actions.ActOnIntegerConstant(SourceLocation(), 1);
+          }
+          return StepValue != 0;
+        case OO_PlusEqual:
+        case OO_MinusEqual:
+          if (VarChecker.Visit(E->getArg(0))) {
+            StepValue = E->getArg(1);
+            IsCompatibleWithTest = (IsLessOp && E->getOperator() == OO_PlusEqual) ||
+                (!IsLessOp && E->getOperator() == OO_MinusEqual);
+          }
+          return StepValue != 0;
+        case OO_Equal:
+          if (VarChecker.Visit(E->getArg(0)) && ExprChecker.Visit(E->getArg(1))) {
+            StepValue = ExprChecker.getStepValue();
+            IsCompatibleWithTest = IsLessOp == ExprChecker.isIncrement();
+          }
+          return StepValue != 0;
+        default:
+          break;
+      }
+      return false;
+    }
+    bool VisitStmt(Stmt *S) { return false; }
+    ForIncrChecker(Decl *D, CodeGenFunction &S, bool LessOp)
       : VarChecker(D), ExprChecker(VarChecker), StepValue(0), Actions(S),
         IsLessOp(LessOp), IsCompatibleWithTest(false) {}
-  Expr *getStepValue() { return StepValue; }
-  bool isCompatibleWithTest() const { return IsCompatibleWithTest; }
-};
+    Expr *getStepValue() { return StepValue; }
+    bool isCompatibleWithTest() const { return IsCompatibleWithTest; }
+  };
 }
 
 bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
-                                        Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
-                                        BinaryOperatorKind &OpKind) {
+                                             Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
+                                             BinaryOperatorKind &OpKind) {
   // assert(S && "non-null statement must be specified");
   // OpenMP [2.9.5, Canonical Loop Form]
   //  for (init-expr; test-expr; incr-expr) structured-block
   OpKind = BO_Assign;
   ForStmt *For = dyn_cast_or_null<ForStmt>(S);
   if (!For) {
-//    Diag(S->getLocStart(), diag::err_omp_not_for)
-//        << getOpenMPDirectiveName(Kind);
+    //    Diag(S->getLocStart(), diag::err_omp_not_for)
+    //        << getOpenMPDirectiveName(Kind);
     return true;
   }
   Stmt *Body = For->getBody();
   if (!Body) {
-//    Diag(S->getLocStart(), diag::err_omp_directive_nonblock)
-//        << getOpenMPDirectiveName(Kind);
+    //    Diag(S->getLocStart(), diag::err_omp_directive_nonblock)
+    //        << getOpenMPDirectiveName(Kind);
     return true;
   }
 
@@ -331,9 +331,9 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   Stmt *Init = For->getInit();
   VarDecl *Var;
   if (!Init || !(Var = dyn_cast_or_null<VarDecl>(InitChecker.Visit(Init)))) {
-//    Diag(Init ? Init->getLocStart() : For->getForLoc(),
-//         diag::err_omp_not_canonical_for)
-//        << 0;
+    //    Diag(Init ? Init->getLocStart() : For->getForLoc(),
+    //         diag::err_omp_not_canonical_for)
+    //        << 0;
     return true;
   }
   SourceLocation InitLoc = Init->getLocStart();
@@ -350,13 +350,13 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   // For C++, a variable of a random access iterator type.
   // For C, a variable of a pointer type.
   QualType Type = Var->getType()
-                      .getNonReferenceType()
-                      .getCanonicalType()
-                      .getUnqualifiedType();
+      .getNonReferenceType()
+      .getCanonicalType()
+      .getUnqualifiedType();
   if (!Type->isIntegerType() && !Type->isPointerType() &&
       (!getLangOpts().CPlusPlus || !Type->isOverloadableType())) {
-//    Diag(Init->getLocStart(), diag::err_omp_for_variable)
-//        << getLangOpts().CPlusPlus;
+    //    Diag(Init->getLocStart(), diag::err_omp_for_variable)
+    //        << getLangOpts().CPlusPlus;
     HasErrors = true;
   }
 
@@ -368,9 +368,9 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   Stmt *Cond = For->getCond();
   bool TestCheckCorrect = false;
   if (!Cond || !(TestCheckCorrect = TestChecker.Visit(Cond))) {
-//    Diag(Cond ? Cond->getLocStart() : For->getForLoc(),
-//         diag::err_omp_not_canonical_for)
-//        << 1;
+    //    Diag(Cond ? Cond->getLocStart() : For->getForLoc(),
+    //         diag::err_omp_not_canonical_for)
+    //        << 1;
     HasErrors = true;
   }
 
@@ -389,9 +389,9 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   Stmt *Incr = For->getInc();
   bool IncrCheckCorrect = false;
   if (!Incr || !(IncrCheckCorrect = IncrChecker.Visit(Incr))) {
-//    Diag(Incr ? Incr->getLocStart() : For->getForLoc(),
-//         diag::err_omp_not_canonical_for)
-//        << 2;
+    //    Diag(Incr ? Incr->getLocStart() : For->getForLoc(),
+    //         diag::err_omp_not_canonical_for)
+    //        << 2;
     HasErrors = true;
   }
 
@@ -427,7 +427,7 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   //  incr A loop invariant integer expression.
   Expr *Step = IncrChecker.getStepValue();
   if (Step && !Step->getType()->isIntegralOrEnumerationType()) {
-//    Diag(Step->getExprLoc(), diag::err_omp_for_incr_not_integer);
+    //    Diag(Step->getExprLoc(), diag::err_omp_for_incr_not_integer);
     HasErrors = true;
   }
 
@@ -452,8 +452,8 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
     if ((TestChecker.isLessOp() && IsConst && IsConstNeg) ||
         (!TestChecker.isLessOp() &&
          ((IsConst && !IsConstNeg) || (!IsConst && !IsSigned)))) {
-//      Diag(Incr->getLocStart(), diag::err_omp_for_incr_not_compatible)
-//          << Var << TestChecker.isLessOp();
+      //      Diag(Incr->getLocStart(), diag::err_omp_for_incr_not_compatible)
+      //          << Var << TestChecker.isLessOp();
       HasErrors = true;
     } else {
       // TODO: Negative increment
@@ -468,10 +468,10 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   CheckValue = CheckValue->IgnoreParenImpCasts();
   InitValue = InitValue->IgnoreParenImpCasts();
 
-//  if (TestChecker.isStrictOp()) {
-//    Diff = BuildBinOp(DSAStack->getCurScope(), InitLoc, BO_Sub, CheckValue,
-//                      ActOnIntegerConstant(SourceLocation(), 1));
-//  }
+  //  if (TestChecker.isStrictOp()) {
+  //    Diff = BuildBinOp(DSAStack->getCurScope(), InitLoc, BO_Sub, CheckValue,
+  //                      ActOnIntegerConstant(SourceLocation(), 1));
+  //  }
 
   InitVal = InitValue;
   CheckVal = CheckValue;
@@ -634,50 +634,49 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     if(const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
       if(verbose) llvm::errs() << ">>> Found use of Var = " << VD->getName();
 
-      int MapType = CGM.OpenMPSupport.getMapType(VD);
-
       const Expr *RefExpr;
-
       if(CurrArrayExpr != nullptr) {
         RefExpr = CurrArrayExpr;
       } else {
         RefExpr = D;
       }
 
+      int MapType = CGM.OpenMPSupport.getMapType(VD);
       if (MapType == -1) {
         // FIXME: That should be detected before
         if (verbose) llvm::errs() << " --> assume input (not in clause)";
-        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_TO);
+        MapType = CGM.OpenMPSupport.getMapType(VD);
+      }
+
+      if(MapType == OMP_TGT_MAPTYPE_TO) {
+        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(D);
         CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
-
+        CGM.OpenMPSupport.getOffloadingInputStyle()[VD] = 1;
+        if (verbose) llvm::errs() << " --> input";
+      }
+      else if (MapType == OMP_TGT_MAPTYPE_FROM) {
+        CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(D);
+        if (verbose) llvm::errs() << " --> output";
+      }
+      else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
+        CGM.OpenMPSupport.getOffloadingInputOutputVarUse()[VD].push_back(D);
+        if (verbose) llvm::errs() << " --> both input/output";
       } else {
-        if (verbose) llvm::errs() << " --> That's an argument";
-
-        if(MapType == OMP_TGT_MAPTYPE_TO) {
-          CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
-          CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-          if (verbose) llvm::errs() << " --> input";
-        }
-        else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-          CGM.OpenMPSupport.getOffloadingOutputVarDef()[VD].push_back(RefExpr);
-          if (verbose) llvm::errs() << " --> output";
-        }
-        else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-          if (verbose) llvm::errs() << " --> both input/output not supported";
-          exit(1);
-        } else {
-          if (verbose) llvm::errs() << " --> euuh something not supported";
-          exit(1);
-        }
+        if (verbose) llvm::errs() << " --> euuh something not supported";
+        exit(1);
       }
 
       if(verbose) llvm::errs() << "\n";
 
-      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue()) {
+
+
+      /*FIXME: experiment without input reordering*/
+      /*
+      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue() && MapType == OMP_TGT_MAPTYPE_FROM) {
         if(verbose) llvm::errs() << "Require reordering\n";
         CGM.OpenMPSupport.getReorderMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
-      }
+      }*/
 
     }
 
@@ -692,6 +691,9 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
     TraverseStmt(A->getBase());
     CurrArrayExpr = nullptr;
     CurrArrayIndexExpr = nullptr;
+
+    // FIXME: experiment without reordering
+    TraverseStmt(A->getIdx());
     return true;
   }
 
@@ -987,7 +989,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   CGM.OpenMPSupport.syncStack();
   DefineJNITypes();
 
-  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   auto& indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
 
@@ -1050,8 +1051,16 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   EmitSparkJob();
 
+  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
+  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
+  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
+
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
+
+  // Initialize a new CodeGenFunction used to generate the mapping
+  CodeGenFunction CGF(CGM, true);
 
   // Get JNI type
   llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
@@ -1061,6 +1070,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
   llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
 
+  llvm::IntegerType *IntTy_jlong = CGF.Builder.getInt64Ty();
+  llvm::IntegerType *IntTy_jint = CGF.Builder.getInt32Ty();
+
   // Initialize arguments
   std::vector<llvm::Type*> FuncTy_args;
 
@@ -1068,10 +1080,27 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   FuncTy_args.push_back(PointerTy_1);
   FuncTy_args.push_back(PointerTy_jobject);
 
-  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      FuncTy_args.push_back(IntTy_jlong);
+    } else {
       FuncTy_args.push_back(PointerTy_jobject);
     }
+  }
+
+  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it) {
+    bool isCnt = CntMap.find(it->first) != CntMap.end();
+    if(isCnt) {
+      FuncTy_args.push_back(IntTy_jlong);
+    } else {
+      FuncTy_args.push_back(PointerTy_jobject);
+    }
+  }
+
+  // Size of the outputs
+  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    FuncTy_args.push_back(IntTy_jint);
   }
 
   llvm::FunctionType* FnTy = llvm::FunctionType::get(
@@ -1083,9 +1112,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
                              "Java_org_llvm_openmp_OmpKernel_mappingMethod", &CGM.getModule());
 
-
-  // Initialize a new CodeGenFunction used to generate the mapping
-  CodeGenFunction CGF(CGM, true);
   CGF.CurFn = MapFn;
   CGF.EnsureInsertPoint();
 
@@ -1096,6 +1122,12 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
   llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
   llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
+  llvm::ConstantInt* const_int64_8 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("8"), 10));
+
+  llvm::ConstantInt* const_int64_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("4"), 10));
+
+
+  llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
 
   // Global variable
   llvm::Value* const_ptr_init = CGF.Builder.CreateGlobalStringPtr("<init>", ".str.init");
@@ -1127,124 +1159,208 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Allocate, load and cast input variables (i.e. the arguments)
   for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      const VarDecl *VD = it->first;
+    const VarDecl *VD = it->first;
 
-      // Find the type of one element
-      QualType varType = VD->getType();
-      while(varType->isAnyPointerType()) {
-        varType = varType->getPointeeType();
+    bool isCnt = CntMap.find(VD) != CntMap.end();
+    if(isCnt) {
+      // FIXME: What about long ??
+      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
       }
-      llvm::Type *TyObject_arg = ConvertType(varType);
-      llvm::PointerType* PointerTy_arg = llvm::PointerType::get(TyObject_arg, 0);
+    } else {
 
-      args->setName(VD->getName());
-      llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
-      llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-      llvm::LoadInst* ptr_arg = CGF.Builder.CreateLoad(alloca_arg, "");
-
-      llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
-
+      // GetByteArrayElements
       std::vector<llvm::Value*> ptr_load_arg_params;
       ptr_load_arg_params.push_back(ptr_env);
-      ptr_load_arg_params.push_back(ptr_arg);
+      ptr_load_arg_params.push_back(args);
       ptr_load_arg_params.push_back(const_ptr_null);
       llvm::CallInst* ptr_load_arg = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
       ptr_load_arg->setCallingConv(llvm::CallingConv::C);
       ptr_load_arg->setTailCall(false);
 
-      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+      args->setName(VD->getName());
 
-      VecPtrBarrays.push_back(ptr_arg);
+      VecPtrBarrays.push_back(args);
       VecPtrValues.push_back(ptr_load_arg);
 
-      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, ptr_265);
-      args++;
+      QualType varType = VD->getType();
+      llvm::Type *TyObject_arg = ConvertType(varType);
+
+      llvm::Value *valuePtr;
+
+      if(!varType->isAnyPointerType()) {
+        if(verbose) llvm::errs() << ">Test< " << VD->getName() << " is scalar\n";
+
+        llvm::PointerType* PointerTy_arg = llvm::PointerType::get(TyObject_arg, 0);
+        valuePtr =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+
+      } else {
+        llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
+
+        valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
+        llvm::StoreInst* store_test = CGF.Builder.CreateStore(ptr_265, valuePtr);
+      }
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, valuePtr);
+      }
     }
+
+    args++;
+  }
+
+  // Keep values that have to be used for releasing.
+  llvm::SmallVector<llvm::Value*, 8> VecOutBarrays;
+  llvm::SmallVector<llvm::Value*, 8> VecOutValues;
+
+  // Allocate, load and cast input/output variables (i.e. the arguments)
+  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it){
+    const VarDecl *VD = it->first;
+
+    bool isCnt = CntMap.find(VD) != CntMap.end();
+    if(isCnt) {
+      // FIXME: What about long ??
+      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
+      }
+    } else {
+
+      // GetByteArrayElements
+      std::vector<llvm::Value*> ptr_load_arg_params;
+      ptr_load_arg_params.push_back(ptr_env);
+      ptr_load_arg_params.push_back(args);
+      ptr_load_arg_params.push_back(const_ptr_null);
+      llvm::CallInst* ptr_load_arg = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
+      ptr_load_arg->setCallingConv(llvm::CallingConv::C);
+      ptr_load_arg->setTailCall(false);
+
+      args->setName(VD->getName());
+
+      VecOutBarrays.push_back(args);
+      VecOutValues.push_back(ptr_load_arg);
+
+      QualType varType = VD->getType();
+      llvm::Type *TyObject_arg = ConvertType(varType);
+
+      llvm::Value *valuePtr;
+
+      if(!varType->isAnyPointerType()) {
+        if(verbose) llvm::errs() << ">Test< " << VD->getName() << " is scalar\n";
+
+        llvm::PointerType* PointerTy_arg = llvm::PointerType::get(TyObject_arg, 0);
+        valuePtr =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+
+      } else {
+        llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
+
+        valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
+        llvm::StoreInst* store_test = CGF.Builder.CreateStore(ptr_265, valuePtr);
+      }
+
+      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, valuePtr);
+      }
+    }
+
+    args++;
   }
 
   // Allocate output variables
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it) {
+  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
+    const VarDecl *VD = it->first;
+
+    QualType varType = VD->getType();
+    llvm::Type *TyObject_res = ConvertType(varType);
+    //llvm::AllocaInst *alloca_res = CGF.Builder.CreateAlloca(CGF.Builder.getInt8Ty(), args);
+
+    // NewByteArray
+    llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
+    llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
+    std::vector<llvm::Value*> ptr_277_params;
+    ptr_277_params.push_back(ptr_env);
+    ptr_277_params.push_back(args);
+    llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    ptr_277->setCallingConv(llvm::CallingConv::C);
+    ptr_277->setTailCall(true);
+
+    // GetByteArrayElements
+    std::vector<llvm::Value*> ptr_load_arg_params;
+    ptr_load_arg_params.push_back(ptr_env);
+    ptr_load_arg_params.push_back(ptr_277);
+    ptr_load_arg_params.push_back(const_ptr_null);
+    llvm::CallInst* alloca_res = CGF.Builder.CreateCall(ptr_fn_env, ptr_load_arg_params);
+    alloca_res->setCallingConv(llvm::CallingConv::C);
+    alloca_res->setTailCall(false);
+
+    CGF.Builder.CreateMemSet(alloca_res, CGF.Builder.getInt8(0), args, 1);
+
+    llvm::Value *cast_addr = CGF.Builder.CreateBitOrPointerCast(alloca_res, TyObject_res);
+    llvm::AllocaInst *alloca_addr = CGF.Builder.CreateAlloca(TyObject_res);
+    llvm::StoreInst *store_addr = CGF.Builder.CreateStore(cast_addr, alloca_addr);
+
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      const VarDecl *VD = it->first;
-
-      // Find the type of one element
-      QualType varType = VD->getType();
-      while(varType->isAnyPointerType()) {
-        varType = varType->getPointeeType();
-      }
-
-      llvm::Type *TyObject_res = ConvertType(varType);
-      llvm::AllocaInst* alloca_res = CGF.Builder.CreateAlloca(TyObject_res);
-
-      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_res);
+      CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_addr);
     }
+
+    args->setName("sizeOf" + VD->getName());
+
+    VecOutBarrays.push_back(ptr_277);
+    VecOutValues.push_back(alloca_res);
+    args++;
   }
 
   CGF.EmitStmt(Body);
 
-  auto ptrBarray = VecPtrBarrays.begin();
   auto ptrValue = VecPtrValues.begin();
 
-  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it){
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      llvm::LoadInst* ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_xx, 0, 192);
-      llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
+  llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 192);
+  llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
 
-      std::vector<llvm::Value*> void_272_params;
-      void_272_params.push_back(ptr_env);
-      void_272_params.push_back(*ptrBarray);
-      void_272_params.push_back(*ptrValue);
-      void_272_params.push_back(const_int32_2);
-      llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
-      void_272->setCallingConv(llvm::CallingConv::C);
-      void_272->setTailCall(true);
+  for (auto ptrBarray = VecPtrBarrays.begin(); ptrBarray != VecPtrBarrays.end(); ++ptrBarray){
+    // ReleaseByteArrayElements
+    std::vector<llvm::Value*> void_272_params;
+    void_272_params.push_back(ptr_env);
+    void_272_params.push_back(*ptrBarray);
+    void_272_params.push_back(*ptrValue);
+    void_272_params.push_back(const_int32_2);
+    llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
+    void_272->setCallingConv(llvm::CallingConv::C);
+    void_272->setTailCall(true);
 
-      ptrBarray++;
-      ptrValue++;
-    }
+    ptrValue++;
   }
 
   llvm::SmallVector<llvm::Value*, 8> results;
 
-  for (auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
+
+  auto OutValues = VecOutValues.begin();
+
+  for (auto outBarrays = VecOutBarrays.begin(); outBarrays != VecOutBarrays.end(); ++outBarrays)
   {
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      const VarDecl *VD = it->first;
-      llvm::Value *ptr_result = CGM.OpenMPSupport.getOpenMPKernelArgVar(*it2);
+    // ReleaseByteArrayElements
+    std::vector<llvm::Value*> void_272_params;
+    void_272_params.push_back(ptr_env);
+    void_272_params.push_back(*outBarrays);
+    void_272_params.push_back(*OutValues);
+    void_272_params.push_back(const_int32_0);
+    llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
+    void_272->setCallingConv(llvm::CallingConv::C);
+    void_272->setTailCall(true);
 
-      llvm::Value* ptr_273 = CGF.Builder.CreateBitCast(ptr_result, PointerTy_Int8, "");
-      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value* ptr_275 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_274, 0, 176);
-      llvm::LoadInst* ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
-      std::vector<llvm::Value*> ptr_277_params;
-      ptr_277_params.push_back(ptr_env);
-      ptr_277_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
-      llvm::CallInst* ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-      ptr_277->setCallingConv(llvm::CallingConv::C);
-      ptr_277->setTailCall(true);
+    results.push_back(*outBarrays);
 
-      llvm::LoadInst* ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value* ptr_279 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_278, 0, 208);
-      llvm::LoadInst* ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
-      std::vector<llvm::Value*> void_281_params;
-      void_281_params.push_back(ptr_env);
-      void_281_params.push_back(ptr_277);
-      void_281_params.push_back(const_int32_0);
-      void_281_params.push_back(const_int32_4); // FIXME: That should the size in byte of the element
-      void_281_params.push_back(ptr_273);
-      llvm::CallInst* void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-      void_281->setCallingConv(llvm::CallingConv::C);
-      void_281->setTailCall(false);
-
-      results.push_back(ptr_277);
-    }
+    OutValues++;
   }
 
-  unsigned NbOutputs = 0;
-  for(auto it = CGM.OpenMPSupport.getOffloadingOutputVarDef().begin(); it != CGM.OpenMPSupport.getOffloadingOutputVarDef().end(); ++it)
-    NbOutputs += it->second.size();
+  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
 
   if(NbOutputs == 1) {
     // Just return the value
@@ -1252,8 +1368,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   } else if (NbOutputs == 2) {
     // Construct and return a Tuple2
 
-    llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
+    llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 6);
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
@@ -1262,8 +1377,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_330->setCallingConv(llvm::CallingConv::C);
     ptr_330->setTailCall(false);
 
-    llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
+    llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 33);
     llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
@@ -1274,8 +1388,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_334->setCallingConv(llvm::CallingConv::C);
     ptr_334->setTailCall(false);
 
-    llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
+    llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 28);
     llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
     std::vector<llvm::Value*> ptr_338_params;
     ptr_338_params.push_back(ptr_env);
@@ -1291,8 +1404,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   } else if (NbOutputs == 3) {
     // Construct and return a Tuple3
 
-    llvm::LoadInst* ptr_327 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_327, 0, 6);
+    llvm::Value* ptr_328 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 6);
     llvm::LoadInst* ptr_329 = CGF.Builder.CreateLoad(ptr_328, false);
     std::vector<llvm::Value*> ptr_330_params;
     ptr_330_params.push_back(ptr_env);
@@ -1301,8 +1413,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_330->setCallingConv(llvm::CallingConv::C);
     ptr_330->setTailCall(false);
 
-    llvm::LoadInst* ptr_331 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_331, 0, 33);
+    llvm::Value* ptr_332 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 33);
     llvm::LoadInst* ptr_333 = CGF.Builder.CreateLoad(ptr_332, false);
     std::vector<llvm::Value*> ptr_334_params;
     ptr_334_params.push_back(ptr_env);
@@ -1313,8 +1424,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_334->setCallingConv(llvm::CallingConv::C);
     ptr_334->setTailCall(false);
 
-    llvm::LoadInst* ptr_335 = CGF.Builder.CreateLoad(ptr_env, false);
-    llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_335, 0, 28);
+    llvm::Value* ptr_336 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 28);
     llvm::LoadInst* ptr_337 = CGF.Builder.CreateLoad(ptr_336, false);
     std::vector<llvm::Value*> ptr_338_params;
     ptr_338_params.push_back(ptr_env);
