@@ -2227,7 +2227,7 @@ public:
   Expr *ActOnIntegerConstant(SourceLocation Loc, uint64_t Val);
   bool isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
                                           Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
-                                          BinaryOperatorKind &OpKind);
+                                          Expr *&CheckOp, BinaryOperatorKind &OpKind);
   void DefineJNITypes();
   void GenArgumentElementSize(const VarDecl *VD);
   void GenerateMappingKernel(const OMPExecutableDirective &S);
@@ -2241,6 +2241,7 @@ public:
   void EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE);
   void EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE);
   void EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE);
+  std::string getSparkExprOf(const Expr *ExprValue);
 
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
   llvm::Function *GenerateCapturedStmtFunction(const CapturedStmt &S);

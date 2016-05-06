@@ -56,8 +56,8 @@ void CodeGenFunction::EmitSparkJob() {
   }
 
   // Header
-  SPARK_FILE << "package org.llvm.openmp\n"
-             << "\n";
+  SPARK_FILE << "package org.llvm.openmp\n\n"
+             << "import java.nio.ByteBuffer\n\n";
 
   EmitSparkNativeKernel(SPARK_FILE);
 
@@ -243,6 +243,32 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << "}\n\n";
 }
 
+
+std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  std::string SparkExpr = "";
+  llvm::APSInt Value;
+
+  bool isEvaluable = ExprValue->EvaluateAsInt(Value, getContext());
+  if(isEvaluable) {
+    SparkExpr += std::to_string(Value.getSExtValue());
+
+  } else if (const DeclRefExpr *D = dyn_cast<DeclRefExpr>(ExprValue)) {
+    const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl());
+    int id = IndexMap[VD];
+    SparkExpr += "ByteBuffer.wrap(arg";
+    SparkExpr += std::to_string(id);
+    // FIXME: How about long ?
+    SparkExpr += ").getInt";
+  } else {
+    llvm::errs()  << "Cannot fully detect its scope statically:\n"
+                  << "Require the generation of native kernels to compute it during the execution.\n";
+    exit(1);
+  }
+
+  return SparkExpr;
+}
+
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
   auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
@@ -306,21 +332,30 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     const Expr *Init = it->second[0];
     const Expr *Check = it->second[1];
     const Expr *Step = it->second[2];
+    const Expr *CheckOp = it->second[3];
 
+    const BinaryOperator *BO = cast<BinaryOperator>(CheckOp);
+
+    /*
     llvm::APSInt initValue, checkValue, stepValue;
 
     bool isInitEvaluable = Init->EvaluateAsInt(initValue, getContext());
     bool isCheckEvaluable = Check->EvaluateAsInt(checkValue, getContext());
     bool isStepEvaluable = Step->EvaluateAsInt(stepValue, getContext());
 
+
     if(!isInitEvaluable || !isCheckEvaluable || !isStepEvaluable) {
       llvm::errs()  << "Cannot fully detect its scope statically:\n"
                     << "Require the generation of native kernels to compute it during the execution.\n";
     } else {
       llvm::errs() << "From " << initValue.getSExtValue() << " until " << checkValue.getSExtValue() << " with step " << stepValue.getSExtValue() << "\n";
-    }
+    }*/
 
-    SPARK_FILE << "    val index" << NbIndex << " = info.sc.parallelize(" << initValue.getSExtValue() << ".toLong to " << checkValue.getSExtValue() << " by " << stepValue.getSExtValue() << ")";
+    SPARK_FILE << "    val index" << NbIndex << " = info.sc.parallelize(" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
+    if(BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
+      SPARK_FILE << "-1";
+    }
+    SPARK_FILE << " by " << getSparkExprOf(Step) << ")";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
     NbIndex++;
   }

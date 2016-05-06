@@ -303,7 +303,7 @@ namespace {
 
 bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
                                              Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
-                                             BinaryOperatorKind &OpKind) {
+                                             Expr *&CheckOp, BinaryOperatorKind &OpKind) {
   // assert(S && "non-null statement must be specified");
   // OpenMP [2.9.5, Canonical Loop Form]
   //  for (init-expr; test-expr; incr-expr) structured-block
@@ -366,6 +366,7 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   //  b relational-op var
   ForTestChecker TestChecker(Var);
   Stmt *Cond = For->getCond();
+  CheckOp = cast<Expr>(Cond);
   bool TestCheckCorrect = false;
   if (!Cond || !(TestCheckCorrect = TestChecker.Visit(Cond))) {
     //    Diag(Cond ? Cond->getLocStart() : For->getForLoc(),
@@ -1027,9 +1028,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     Expr *Check;
     Expr *Init;
     VarDecl *VarCnt;
+    Expr *CheckOp;
     BinaryOperatorKind OpKind;
 
-    isNotSupportedLoopForm(Test, S.getDirectiveKind(), Init, Step, Check, VarCnt, OpKind);
+    isNotSupportedLoopForm(Test, S.getDirectiveKind(), Init, Step, Check, VarCnt, CheckOp, OpKind);
 
     if(verbose) llvm::errs() << "Find counter " << VarCnt->getName() << "\n";
 
@@ -1037,6 +1039,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     CntInfo.push_back(Init);
     CntInfo.push_back(Check);
     CntInfo.push_back(Step);
+    CntInfo.push_back(CheckOp);
 
     Body = For->getBody();
   }
