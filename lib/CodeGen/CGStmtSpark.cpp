@@ -259,7 +259,7 @@ std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
     SparkExpr += "ByteBuffer.wrap(arg";
     SparkExpr += std::to_string(id);
     // FIXME: How about long ?
-    SparkExpr += ").getInt";
+    SparkExpr += ").order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt";
   } else {
     llvm::errs()  << "Cannot fully detect its scope statically:\n"
                   << "Require the generation of native kernels to compute it during the execution.\n";
