@@ -4446,7 +4446,6 @@ int CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
       return elt.OffloadingMapVarsType[VD];
     }
   }
-  llvm::errs() << "\nError: Var " << VD->getName() << " is not offloaded\n";
   return -1;
 }
 void CodeGenModule::OpenMPSupportStackTy::setMapsBegin(bool Flag){
