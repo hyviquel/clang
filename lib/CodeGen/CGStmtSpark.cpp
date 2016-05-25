@@ -292,7 +292,11 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
     SPARK_FILE << "    val arg" << id << " = ";
+    if(it->first->getType()->isAnyPointerType())
+      SPARK_FILE << "info.sc.broadcast(";
     SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
+    if(it->first->getType()->isAnyPointerType())
+      SPARK_FILE << ")";
     SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
   }
 
@@ -309,7 +313,11 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
     SPARK_FILE << "    val arg" << id << " = ";
+    if(it->first->getType()->isAnyPointerType())
+      SPARK_FILE << "info.sc.broadcast(";
     SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
+    if(it->first->getType()->isAnyPointerType())
+      SPARK_FILE << ")";
     SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
   }
 
@@ -498,6 +506,8 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
       } else {
         int id = IndexMap[it->first];
         SPARK_FILE << "arg" << id;
+        if(it->first->getType()->isAnyPointerType())
+          SPARK_FILE << ".value";
       }
     }
     for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
@@ -517,6 +527,8 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
       } else {
         int id = IndexMap[it->first];
         SPARK_FILE << "arg" << id;
+        if(it->first->getType()->isAnyPointerType())
+          SPARK_FILE << ".value";
       }
     }
     for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
