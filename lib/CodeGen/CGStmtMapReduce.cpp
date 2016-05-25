@@ -999,6 +999,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   const Stmt *Body = S.getAssociatedStmt();
+  Stmt *LoopStmt ;
 
   if (const CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
     Body = CS->getCapturedStmt();
@@ -1020,7 +1021,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     }
     const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
 
-    Stmt *Test = const_cast<Stmt*>(Body);
+    LoopStmt = const_cast<Stmt*>(Body);
 
     // Detect info of the loop counter
 
@@ -1031,7 +1032,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     Expr *CheckOp;
     BinaryOperatorKind OpKind;
 
-    isNotSupportedLoopForm(Test, S.getDirectiveKind(), Init, Step, Check, VarCnt, CheckOp, OpKind);
+    isNotSupportedLoopForm(LoopStmt, S.getDirectiveKind(), Init, Step, Check, VarCnt, CheckOp, OpKind);
 
     if(verbose) llvm::errs() << "Find counter " << VarCnt->getName() << "\n";
 
@@ -1045,10 +1046,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Detect input/output expression from the loop body
-  Stmt *Body2 = const_cast<Stmt*>(Body);
   FindKernelArguments Finder(*this);
-  Finder.TraverseStmt(Body2);
-
+  Finder.TraverseStmt(LoopStmt);
 
   GenerateReorderingKernels();
 
@@ -1320,7 +1319,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
   }
 
-  CGF.EmitStmt(Body);
+  if (const CompoundStmt *S = dyn_cast<CompoundStmt>(Body))
+    CGF.EmitCompoundStmtWithoutScope(*S);
+  else
+    CGF.EmitStmt(Body);
 
   auto ptrValue = VecPtrValues.begin();
 
