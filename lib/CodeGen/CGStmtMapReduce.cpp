@@ -1445,6 +1445,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
   } else {
     // TODO: Construct and return Tuples in generic way
+    if (verbose) llvm::errs() << "Need support for more than 3 outputs\n";
+    exit(1);
   }
 }
 
