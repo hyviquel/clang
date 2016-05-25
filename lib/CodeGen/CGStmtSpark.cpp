@@ -576,7 +576,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     else
       SPARK_FILE << "\n";
 
-    SPARK_FILE << "    val output" << id << " = res" << id << ".reduce(Util.bitor)\n";
+    SPARK_FILE << "    val output" << id << " = res" << id << ".treeReduce(Util.bitor)\n";
     SPARK_FILE << "\n";
 
     // Find the bit size of one element
@@ -615,7 +615,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
     else
       SPARK_FILE << "\n";
 
-    SPARK_FILE << "    val output" << id << " = res" << id << ".reduce(Util.bitor)\n";
+    SPARK_FILE << "    val output" << id << " = res" << id << ".treeReduce(Util.bitor)\n";
     SPARK_FILE << "\n";
 
     // Find the bit size of one element
