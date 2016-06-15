@@ -427,7 +427,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    val mapres = index.map{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    val mapres = index.map{ new OmpKernel().mappingWrapper(_) }.persist\n";
   else {
     SPARK_FILE << "    val mapres = index.map{ x => new OmpKernel().mappingWrapper(";
 
@@ -481,8 +481,10 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << ", size" << id;
     }
 
-    SPARK_FILE << ") }\n\n";
+    SPARK_FILE << ") }.persist\n\n";
   }
+  SPARK_FILE << "mapres.foreachPartition{ x =>  }\n";
+  SPARK_FILE << "val mapres2 = mapres.repartition(info.sc.getExecutorStorageStatus.length-1)\n";
 }
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
@@ -504,15 +506,15 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     if(NbOutputs == 1) {
       // 1 output -> return the result directly
-      SPARK_FILE << "    val res" << id << " = mapres";
+      SPARK_FILE << "    val res" << id << " = mapres2";
     }
     else if(NbOutputs == 2 || NbOutputs == 3) {
       // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-      SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}";
+      SPARK_FILE << "    val res" << id << " = mapres2.map { x => x._" << i+1 << "}";
     }
     else {
       // More than 3 outputs -> extract each variable from the Collection
-      SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }";
+      SPARK_FILE << "    val res" << id << " = mapres2.map { x => x(" << i << ") }";
     }
 
     if(isReduced)
