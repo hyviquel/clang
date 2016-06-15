@@ -483,9 +483,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
   SPARK_FILE << "    // Perform Map-Reduce operations\n";
   if (NbInputs == 1)
-    SPARK_FILE << "    var mapres = index.map{ new OmpKernel().mappingWrapper(_) }\n";
+    SPARK_FILE << "    val mapres = index.map{ new OmpKernel().mappingWrapper(_) }\n";
   else {
-    SPARK_FILE << "    var mapres = index.map{ x => new OmpKernel().mappingWrapper(";
+    SPARK_FILE << "    val mapres = index.map{ x => new OmpKernel().mappingWrapper(";
 
     // Assign each argument according to its type
     int i=1;
