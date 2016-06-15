@@ -344,21 +344,6 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     const BinaryOperator *BO = cast<BinaryOperator>(CheckOp);
 
-    /*
-    llvm::APSInt initValue, checkValue, stepValue;
-
-    bool isInitEvaluable = Init->EvaluateAsInt(initValue, getContext());
-    bool isCheckEvaluable = Check->EvaluateAsInt(checkValue, getContext());
-    bool isStepEvaluable = Step->EvaluateAsInt(stepValue, getContext());
-
-
-    if(!isInitEvaluable || !isCheckEvaluable || !isStepEvaluable) {
-      llvm::errs()  << "Cannot fully detect its scope statically:\n"
-                    << "Require the generation of native kernels to compute it during the execution.\n";
-    } else {
-      llvm::errs() << "From " << initValue.getSExtValue() << " until " << checkValue.getSExtValue() << " with step " << stepValue.getSExtValue() << "\n";
-    }*/
-
     SPARK_FILE << "    val index" << NbIndex << " = info.sc.parallelize(" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
     if(BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
@@ -423,48 +408,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
   }
 
-  SPARK_FILE << "    \n";
-
-  /*
-  SPARK_FILE << "    // Create RDD of tuples with each argument to one call of the map function\n";
-  SPARK_FILE << "    var mapargs = ";
-
-  int i=0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-  {
-    // Add only array argument to the RDD
-    bool isRDD = it->first->getType()->isAnyPointerType();
-    if(isRDD) {
-      int id = IndexMap[it->first];
-      int id2 = 0;
-      for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        if(i!=0) SPARK_FILE << ".join(";
-        if(const Expr* reorderExpr = ReorderMap[*it2]) {
-          SPARK_FILE << "input" << id << "_" << id2;
-        }
-        else {
-          SPARK_FILE << "arg" << id;
-        }
-        if(i!=0) SPARK_FILE << ")";
-        if(i>1) {
-          int j;
-          // Flatten the RDDs after the join when needed
-          SPARK_FILE << ".mapValues{case ((u0";
-          for(j=1; j<i; j++) {
-            SPARK_FILE << ", " << "u" << j;
-          }
-          SPARK_FILE << "), u" << j << ") => (u0";
-          for(j=1; j<=i; j++) {
-            SPARK_FILE << ", " << "u" << j;
-          }
-          SPARK_FILE << ")}";
-        }
-        i++;
-        id2++;
-      }
-    }
-  }
-  */
+  SPARK_FILE << "\n";
   SPARK_FILE << "\n\n";
 }
 
