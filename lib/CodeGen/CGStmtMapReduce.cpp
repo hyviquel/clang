@@ -482,137 +482,6 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
 }
 
 
-void CodeGenFunction::GenArgumentElementSize(const VarDecl *VD) {
-  llvm::Module *mod = &(CGM.getModule());
-
-  // Find the bit size of one element
-  QualType varType = VD->getType();
-  while(varType->isAnyPointerType()) {
-    varType = varType->getPointeeType();
-  }
-  int64_t size = getContext().getTypeSize(varType);
-
-  // Type Definitions
-  llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
-  llvm::PointerType* PointerTy_JNINativeInterface = llvm::PointerType::get(StructTy_JNINativeInterface, 0);
-  llvm::PointerType* PointerTy_1 = llvm::PointerType::get(PointerTy_JNINativeInterface, 0);
-
-  llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
-  llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
-
-  std::vector<llvm::Type*> FuncTy_sizeMethod_args;
-  FuncTy_sizeMethod_args.push_back(PointerTy_1);
-  FuncTy_sizeMethod_args.push_back(PointerTy_jobject);
-  llvm::FunctionType* FuncTy_sizeMethod = llvm::FunctionType::get(
-        /*Result=*/llvm::IntegerType::get(mod->getContext(), 32),
-        /*Params=*/FuncTy_sizeMethod_args,
-        /*isVarArg=*/false);
-
-  // Function Declarations
-  llvm::StringRef FnName_sizeMethod = llvm::StringRef((".GetSizeOf" + VD->getName()).str());
-  llvm::Function* sizeMethod = mod->getFunction(FnName_sizeMethod);
-  if (!sizeMethod) {
-    sizeMethod = llvm::Function::Create(
-          /*Type=*/FuncTy_sizeMethod,
-          /*Linkage=*/llvm::GlobalValue::ExternalLinkage,
-          /*Name=*/FnName_sizeMethod, mod);
-    sizeMethod->setCallingConv(llvm::CallingConv::C);
-  }
-
-  // Constant Definitions
-  llvm::ConstantInt* const_size = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, size, false));
-
-  // Function: .GetSizeOf
-  {
-    llvm::Function::arg_iterator args = sizeMethod->arg_begin();
-    llvm::Value* ptr_env = args++;
-    ptr_env->setName("env");
-    llvm::Value* ptr_obj = args++;
-    ptr_obj->setName("obj");
-
-    llvm::BasicBlock* block = llvm::BasicBlock::Create(mod->getContext(), "", sizeMethod, 0);
-    CGBuilderTy LBuilder(block);
-
-    // Block  (label_252)
-    llvm::AllocaInst* alloca_env = LBuilder.CreateAlloca(PointerTy_1);
-    llvm::AllocaInst* alloca_obj = LBuilder.CreateAlloca(PointerTy_jobject);
-    llvm::StoreInst* store_env = LBuilder.CreateStore(ptr_env, alloca_env);
-    llvm::StoreInst* store_obj = LBuilder.CreateStore(ptr_obj, alloca_obj);
-    LBuilder.CreateRet(const_size);
-
-  }
-}
-
-
-/// A StmtVisitor that propagates the raw counts through the AST and
-/// records the count at statements where the value may change.
-struct FindIndexingArguments : public RecursiveASTVisitor<FindIndexingArguments> {
-
-  CodeGenFunction &CGF;
-  CodeGenModule &CGM;
-  bool verbose;
-
-  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*,8>> &InputsMap;
-  llvm::SmallSet<const VarDecl *, 16> &InputsSet;
-
-  ArraySubscriptExpr *CurrArrayExpr;
-  Expr *CurrArrayIndexExpr;
-
-  FindIndexingArguments(CodeGenFunction &CGF, unsigned hash)
-    : CGF(CGF), CGM(CGF.CGM), InputsMap(CGM.OpenMPSupport.getReorderInputVarUse()[hash]),
-      InputsSet(CGM.OpenMPSupport.getOffloadingInputs()) {
-    verbose = VERBOSE;
-    CurrArrayExpr = NULL;
-  }
-
-  bool VisitDeclRefExpr(DeclRefExpr *D) {
-
-    if(const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
-      if(verbose) llvm::errs() << "Indexing use the variable " << VD->getName();
-      const Expr *RefExpr;
-
-      int MapType = CGM.OpenMPSupport.getMapType(VD);
-
-      if(CurrArrayExpr != nullptr) {
-        RefExpr = CurrArrayExpr;
-        if(verbose) llvm::errs() << "Require more advanced analysis\n";
-        exit(1);
-      } else {
-        RefExpr = D;
-      }
-
-      if (MapType == -1) {
-        // FIXME: That should be detected before
-        if (verbose) llvm::errs() << "Add to input (not in clause)";
-        CGM.OpenMPSupport.getOffloadingInputVarUse()[VD].push_back(RefExpr);
-        CGM.OpenMPSupport.getOffloadingInputs().insert(VD);
-        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_FROM);
-
-      }
-
-      InputsMap[VD].push_back(RefExpr);
-      InputsSet.insert(VD);
-
-      if(verbose) llvm::errs() << "\n";
-    }
-
-    return true;
-  }
-
-  bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
-    CurrArrayExpr = A;
-    CurrArrayIndexExpr = A->getIdx();
-
-    // Skip array indexes since the pointer will index directly the right element
-    TraverseStmt(A->getBase());
-    CurrArrayExpr = nullptr;
-    CurrArrayIndexExpr = nullptr;
-    return true;
-  }
-
-};
-
-
 /// A StmtVisitor that propagates the raw counts through the AST and
 /// records the count at statements where the value may change.
 struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
@@ -789,7 +658,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
     llvm::ConstantInt* const_int64_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
     llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
-    llvm::ConstantInt* const_int32_184 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("184"), 10));
 
     llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(mod->getContext(), "scala/Tuple2", true);
     llvm::Constant *const_array_263 = llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
@@ -812,11 +680,11 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     llvm::Function::arg_iterator args = RedFn->arg_begin();
     args->setName("env");
     llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-    llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
+    CGF.Builder.CreateStore(args, alloca_env);
     args++;
     args->setName("obj");
     llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
+    CGF.Builder.CreateStore(args, alloca_obj);
     args++;
 
     llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
@@ -828,7 +696,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 
     // Allocate, load and cast the first operand
     llvm::AllocaInst* alloca_arg1 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    llvm::StoreInst* store_arg1 = CGF.Builder.CreateStore(args, alloca_arg1);
+    CGF.Builder.CreateStore(args, alloca_arg1);
 
     llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg1, "");
     std::vector<llvm::Value*> ptr_275_params;
@@ -853,7 +721,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     llvm::LoadInst* ptr_273_2 = CGF.Builder.CreateLoad(alloca_env, "");
 
     llvm::AllocaInst* alloca_arg2 = CGF.Builder.CreateAlloca(PointerTy_jobject);
-    llvm::StoreInst* store_arg2 = CGF.Builder.CreateStore(args, alloca_arg2);
+    CGF.Builder.CreateStore(args, alloca_arg2);
 
     llvm::LoadInst* ptr_274_1 = CGF.Builder.CreateLoad(alloca_arg2, "");
     std::vector<llvm::Value*> ptr_275_1_params;
@@ -975,7 +843,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
     void_281->setCallingConv(llvm::CallingConv::C);
     void_281->setTailCall(false);
 
-    llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_277);
+    CGF.Builder.CreateRet(ptr_277);
 
   }
 }
@@ -1049,8 +917,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   FindKernelArguments Finder(*this);
   Finder.TraverseStmt(LoopStmt);
 
-  GenerateReorderingKernels();
-
   EmitSparkJob();
 
   auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
@@ -1119,15 +985,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Generate useful type and constant
   llvm::PointerType* PointerTy_Int8 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
-  llvm::PointerType* PointerTy_Int32 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
   llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
   llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
-  llvm::ConstantInt* const_int32_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
-  llvm::ConstantInt* const_int64_8 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("8"), 10));
-
-  llvm::ConstantInt* const_int64_4 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(64, llvm::StringRef("4"), 10));
-
 
   llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
 
@@ -1142,11 +1002,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::Function::arg_iterator args = MapFn->arg_begin();
   args->setName("env");
   llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-  llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
+  CGF.Builder.CreateStore(args, alloca_env);
   args++;
   args->setName("obj");
   llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
+  CGF.Builder.CreateStore(args, alloca_obj);
   args++;
 
   llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
@@ -1178,7 +1038,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       // FIXME: What about long ??
       llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
       llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
-      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+      CGF.Builder.CreateStore(cast, alloca_cast);
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
         CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
@@ -1214,7 +1074,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
         llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
 
         valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
-        llvm::StoreInst* store_test = CGF.Builder.CreateStore(ptr_265, valuePtr);
+        CGF.Builder.CreateStore(ptr_265, valuePtr);
       }
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
@@ -1238,7 +1098,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       // FIXME: What about long ??
       llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
       llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
-      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
+      CGF.Builder.CreateStore(cast, alloca_cast);
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
         CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
@@ -1274,7 +1134,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
         llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
 
         valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
-        llvm::StoreInst* store_test = CGF.Builder.CreateStore(ptr_265, valuePtr);
+        CGF.Builder.CreateStore(ptr_265, valuePtr);
       }
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
@@ -1320,7 +1180,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     llvm::Value *cast_addr = CGF.Builder.CreateBitOrPointerCast(alloca_res, TyObject_res);
     llvm::AllocaInst *alloca_addr = CGF.Builder.CreateAlloca(TyObject_res);
-    llvm::StoreInst *store_addr = CGF.Builder.CreateStore(cast_addr, alloca_addr);
+    CGF.Builder.CreateStore(cast_addr, alloca_addr);
 
     for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
       CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_addr);
@@ -1400,7 +1260,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   if(NbOutputs == 1) {
     // Just return the value
-    llvm::ReturnInst *ret = CGF.Builder.CreateRet(results.front());
+    CGF.Builder.CreateRet(results.front());
   } else if (NbOutputs == 2) {
     // Construct and return a Tuple2
 
@@ -1436,7 +1296,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_338->setCallingConv(llvm::CallingConv::C);
     ptr_338->setTailCall(false);
 
-    llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
+    CGF.Builder.CreateRet(ptr_338);
   } else if (NbOutputs == 3) {
     // Construct and return a Tuple3
 
@@ -1473,219 +1333,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_338->setCallingConv(llvm::CallingConv::C);
     ptr_338->setTailCall(false);
 
-    llvm::ReturnInst *ret = CGF.Builder.CreateRet(ptr_338);
+    CGF.Builder.CreateRet(ptr_338);
   } else {
     // TODO: Construct and return Tuples in generic way
     if (verbose) llvm::errs() << "Need support for more than 3 outputs\n";
     exit(1);
   }
-}
-
-void CodeGenFunction::GenerateReorderingKernels() {
-  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
-  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& ReorderMap = CGM.OpenMPSupport.getReorderMap();
-  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
-  auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
-
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it) {
-    int id = IndexMap[it->first];
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        unsigned hash = ExprID.ComputeHash();
-
-        if(ReorderInputVarUse.find(hash) == ReorderInputVarUse.end()) {
-          FindIndexingArguments Finder(*this, hash);
-          Expr *expr = const_cast<Expr*>(reorderExpr);
-          Finder.TraverseStmt(expr);
-          GenerateReorderingKernel(it->first, reorderExpr);
-        }
-      }
-    }
-  }
-
-  for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it) {
-    int id = IndexMap[it->first];
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      if(const Expr* reorderExpr = ReorderMap[*it2]) {
-        llvm::FoldingSetNodeID ExprID;
-        reorderExpr->Profile(ExprID, getContext(), true);
-        unsigned hash = ExprID.ComputeHash();
-
-        if(ReorderInputVarUse.find(hash) == ReorderInputVarUse.end()) {
-          FindIndexingArguments Finder(*this, hash);
-          Expr *expr = const_cast<Expr*>(reorderExpr);
-          Finder.TraverseStmt(expr);
-          GenerateReorderingKernel(it->first, reorderExpr);
-        }
-      }
-    }
-  }
-}
-
-void CodeGenFunction::GenerateReorderingKernel(const VarDecl* VD, const Expr* expression) {
-  bool verbose = VERBOSE;
-
-  llvm::FoldingSetNodeID ExprID;
-  expression->Profile(ExprID, getContext(), true);
-  unsigned hash = ExprID.ComputeHash();
-  auto& InputsMap = CGM.OpenMPSupport.getReorderInputVarUse()[hash];
-  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
-
-  CodeGenFunction CGF(CGM, true);
-  DefineJNITypes();
-
-  // Create the mapping function
-  llvm::Module *mod = &(CGM.getModule());
-
-  // Get JNI type
-  llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
-  llvm::PointerType* PointerTy_JNINativeInterface = llvm::PointerType::get(StructTy_JNINativeInterface, 0);
-  llvm::PointerType* PointerTy_1 = llvm::PointerType::get(PointerTy_JNINativeInterface, 0);
-
-  llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
-  llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
-
-  llvm::IntegerType *IntTy_jlong = CGF.Builder.getInt64Ty();
-  llvm::IntegerType *IntTy_jint = CGF.Builder.getInt32Ty();
-
-
-  llvm::PointerType* PointerTy_Int8 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
-  llvm::PointerType* PointerTy_Int32 = llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
-
-  llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
-
-
-  // Initialize arguments
-  std::vector<llvm::Type*> FuncTy_args;
-
-  // Add compulsary arguments
-  FuncTy_args.push_back(PointerTy_1);
-  FuncTy_args.push_back(PointerTy_jobject);
-
-  for(auto it = InputsMap.begin(); it != InputsMap.end(); ++it) {
-    bool isCnt = CntMap.find(it->first) != CntMap.end();
-    if(isCnt) {
-      FuncTy_args.push_back(IntTy_jlong);
-    } else {
-      FuncTy_args.push_back(PointerTy_jobject);
-    }
-  }
-
-  llvm::FunctionType* FnTy = llvm::FunctionType::get(
-        /*Result=*/IntTy_jlong,
-        /*Params=*/FuncTy_args,
-        /*isVarArg=*/false);
-
-
-
-  llvm::StringRef ReordFnName = llvm::StringRef("Java_org_llvm_openmp_OmpKernel_reorderMethod" + std::to_string(hash));
-
-  if(verbose) llvm::errs() << ReordFnName.str() << "\n";
-
-  llvm::Function *ReordFn =
-      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage, ReordFnName, mod);
-
-  // Initialize a new CodeGenFunction used to generate the reduction
-
-  CGF.CurFn = ReordFn;
-  CGF.EnsureInsertPoint();
-
-  // Allocate and load compulsry JNI arguments
-  llvm::Function::arg_iterator args = ReordFn->arg_begin();
-  args->setName("env");
-  llvm::AllocaInst* alloca_env = CGF.Builder.CreateAlloca(PointerTy_1);
-  llvm::StoreInst* store_env = CGF.Builder.CreateStore(args, alloca_env);
-  args++;
-  args->setName("obj");
-  llvm::AllocaInst* alloca_obj = CGF.Builder.CreateAlloca(PointerTy_jobject);
-  llvm::StoreInst* store_obj = CGF.Builder.CreateStore(args, alloca_obj);
-  args++;
-
-  llvm::LoadInst* ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
-  llvm::LoadInst* ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
-
-  llvm::Value* ptr_271 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_270, 0, 184);
-  llvm::LoadInst* ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-  llvm::LoadInst* ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
-
-  // Keep values that have to be used for releasing.
-  llvm::SmallVector<llvm::Value*, 8> VecPtrBarrays;
-  llvm::SmallVector<llvm::Value*, 8> VecPtrValues;
-
-  // Allocate, load and cast input variables (i.e. the arguments)
-  for (auto it = InputsMap.begin(); it != InputsMap.end(); ++it)
-  {
-    const VarDecl *VD = it->first;
-    llvm::SmallVector<const Expr*, 8> DefExprs = it->second;
-    args->setName(VD->getName());
-
-    bool isCnt = CntMap.find(VD) != CntMap.end();
-    if(isCnt) {
-      // FIXME: What about long ??
-      //llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(IntTy_jlong);
-      //llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-      //llvm::LoadInst* load_arg = CGF.Builder.CreateLoad(alloca_arg, "");
-
-      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
-      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
-      llvm::StoreInst* store_cast = CGF.Builder.CreateStore(cast, alloca_cast);
-
-      for(auto use = DefExprs.begin(); use != DefExprs.end(); use++)
-        CGM.OpenMPSupport.addOpenMPKernelArgVar(*use, alloca_cast);
-    } else {
-      llvm::AllocaInst* alloca_arg = CGF.Builder.CreateAlloca(PointerTy_jobject);
-      llvm::StoreInst* store_arg = CGF.Builder.CreateStore(args, alloca_arg);
-
-      llvm::ConstantPointerNull* const_ptr_256 = llvm::ConstantPointerNull::get(PointerTy_Int8);
-
-      llvm::LoadInst* ptr_274 = CGF.Builder.CreateLoad(alloca_arg, "");
-      std::vector<llvm::Value*> ptr_275_params;
-      ptr_275_params.push_back(ptr_273);
-      ptr_275_params.push_back(ptr_274);
-      ptr_275_params.push_back(const_ptr_256);
-      llvm::CallInst* ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
-      ptr_275->setCallingConv(llvm::CallingConv::C);
-      ptr_275->setTailCall(false);
-
-      llvm::Value* ptr_265 =  CGF.Builder.CreateBitCast(ptr_275, PointerTy_Int32);
-
-      VecPtrBarrays.push_back(ptr_274);
-      VecPtrValues.push_back(ptr_275);
-
-      for(auto use = DefExprs.begin(); use != DefExprs.end(); use++)
-        CGM.OpenMPSupport.addOpenMPKernelArgVar(*use, ptr_265);
-    }
-
-    args++;
-
-  }
-
-  llvm::Value* index = CGF.EmitScalarExpr(expression);
-  llvm::Value* res = CGF.Builder.CreateSExtOrBitCast(index, IntTy_jlong);
-
-
-  auto ptrValue = VecPtrValues.begin();
-
-  for (auto it = VecPtrBarrays.begin(); it != VecPtrBarrays.end(); ++it){
-    llvm::LoadInst* ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-    llvm::Value* ptr_270 = CGF.Builder.CreateConstGEP2_32(nullptr, ptr_xx, 0, 192);
-    llvm::LoadInst* ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
-
-    std::vector<llvm::Value*> void_272_params;
-    void_272_params.push_back(ptr_env);
-    void_272_params.push_back(*it);
-    void_272_params.push_back(*ptrValue);
-    void_272_params.push_back(const_int32_0);
-    llvm::CallInst* void_272 = CGF.Builder.CreateCall(ptr_271, void_272_params);
-    void_272->setCallingConv(llvm::CallingConv::C);
-    void_272->setTailCall(true);
-
-    ptrValue++;
-  }
-
-  CGF.Builder.CreateRet(res);
 }
 

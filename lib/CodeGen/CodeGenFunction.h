@@ -2229,11 +2229,8 @@ public:
                                           Expr *&InitVal, Expr *&StepVal, Expr *&CheckVal, VarDecl *&VarCnt,
                                           Expr *&CheckOp, BinaryOperatorKind &OpKind);
   void DefineJNITypes();
-  void GenArgumentElementSize(const VarDecl *VD);
   void GenerateMappingKernel(const OMPExecutableDirective &S);
   void GenerateReductionKernel(const OMPReductionClause &C, const OMPExecutableDirective &S);
-  void GenerateReorderingKernels();
-  void GenerateReorderingKernel(const VarDecl* varDecl, const Expr* expression);
 
 
   void EmitSparkJob();
