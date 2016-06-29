@@ -321,8 +321,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   {
     int id = IndexMap[it->first];
 
-    SPARK_FILE << "val size" << id << " = ";
-    SPARK_FILE << "at.get(" << id << ")";
+    SPARK_FILE << "    val size" << id << " = at.get(" << id << ")";
     SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
   }
 
@@ -427,8 +426,8 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
 
     SPARK_FILE << ") }.persist\n\n";
   }
-  SPARK_FILE << "mapres.foreachPartition{ x =>  }\n";
-  SPARK_FILE << "val mapres2 = mapres.repartition(info.sc.getExecutorStorageStatus.length-1)\n";
+  SPARK_FILE << "    mapres.foreachPartition{ x =>  }\n";
+  SPARK_FILE << "    val mapres2 = mapres.repartition(info.getExecutorNumber)\n";
 }
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
