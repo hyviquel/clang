@@ -3966,8 +3966,8 @@ CodeGenModule::OpenMPSupportStackTy::OMPStackElemTy::OMPStackElemTy(
       Mergeable(false), Schedule(0), ChunkSize(0), NewTask(false),
       Untied(false), HasLastPrivate(false), TaskPrivateTy(0), TaskPrivateQTy(),
       TaskPrivateBase(0), NumTeams(0), ThreadLimit(0), WaitDepsArgs(0),
-      OffloadingHostFunctionCall(0), MapsBegin(0), MapsEnd(0), OffloadingDevice(0),
-      CurrentIdentifier(0) {}
+      OffloadingHostFunctionCall(0), MapsBegin(0), MapsEnd(0), OffloadingDevice(0), CurrentIdentifier(0),
+      SparkMappingInfo(new OMPSparkMappingInfo) {}
 
 CodeGenFunction &CodeGenModule::OpenMPSupportStackTy::getCGFForReductionFunction() {
   if (!OpenMPStack.back().RedCGF) {
@@ -4427,6 +4427,7 @@ void CodeGenModule::OpenMPSupportStackTy::syncStack() {
        I != E; ++I) {
     if (I->OffloadingMapVarsIndex.size() > 0) {
       OpenMPStack.back().CurrentIdentifier = I->CurrentIdentifier;
+      OpenMPStack.back().SparkMappingInfo->Identifier = I->SparkMappingInfo->Identifier;
       // Sync type
       for(auto it = I->OffloadingMapVarsType.begin(); it != I->OffloadingMapVarsType.end(); it++) {
         OpenMPStack.back().OffloadingMapVarsType[it->first] = it->second;
@@ -4439,6 +4440,25 @@ void CodeGenModule::OpenMPSupportStackTy::syncStack() {
       return;
     }
   }
+}
+void CodeGenModule::OpenMPSupportStackTy::initMapping() {
+  //OpenMPStack.back().SparkMappingInfo = new OpenMPSupportStackTy::OMPSparkMappingInfo;
+}
+void CodeGenModule::OpenMPSupportStackTy::backupMapping() {
+  for(OMPStackElemTy& elt : OpenMPStack) {
+    if (elt.OffloadingMapVarsIndex.size() > 0) {
+      elt.SparkMappingFunctions.push_back(OpenMPStack.back().SparkMappingInfo);
+      elt.CurrentIdentifier = OpenMPStack.back().CurrentIdentifier;
+      elt.SparkMappingInfo->Identifier = OpenMPStack.back().SparkMappingInfo->Identifier + 1;
+      // Sync type
+      elt.OffloadingMapVarsType = OpenMPStack.back().OffloadingMapVarsType;
+      elt.OffloadingMapVarsIndex = OpenMPStack.back().OffloadingMapVarsIndex;
+      return;
+    }
+  }
+
+
+  //OpenMPStack[OpenMPStack.size()-2].SparkMappingFunctions.push_back(OpenMPStack.back().SparkMappingInfo);
 }
 int CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
   for(OMPStackElemTy& elt : OpenMPStack) {

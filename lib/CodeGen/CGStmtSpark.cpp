@@ -74,7 +74,11 @@ void CodeGenFunction::EmitSparkJob() {
 
   EmitSparkInput(SPARK_FILE);
 
-  EmitSparkMapping(SPARK_FILE);
+  auto& mappingFunctions = CGM.OpenMPSupport.getSparkMappingFunctions();
+
+  for(auto it = mappingFunctions.begin(); it != mappingFunctions.end(); it++) {
+    EmitSparkMapping(SPARK_FILE, **it);
+  }
 
   EmitSparkOutput(SPARK_FILE);
 
@@ -87,157 +91,113 @@ void CodeGenFunction::EmitSparkJob() {
 void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   bool verbose = VERBOSE;
 
-  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
-  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
-  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& reductionMap = CGM.OpenMPSupport.getReductionMap();
-  auto& ReorderInputVarUse = CGM.OpenMPSupport.getReorderInputVarUse();
-  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+  auto& mappingFunctions = CGM.OpenMPSupport.getSparkMappingFunctions();
+  auto& ReductionMap = CGM.OpenMPSupport.getReductionMap();
 
   int i;
 
-  unsigned NbInputs = InputVarUse.size() + InputOutputVarUse.size();
-  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
-  unsigned NbOutputSize = OutputVarDef.size();
-
-  if(verbose) llvm::errs() << "NbInput => " << NbInputs << "\n";
-  if(verbose) llvm::errs() << "NbOutput => " << NbOutputs << "\n";
   SPARK_FILE << "\n";
   SPARK_FILE << "import org.apache.spark.SparkFiles\n";
   SPARK_FILE << "class OmpKernel {\n";
-  SPARK_FILE << "  @native def mappingMethod(";
-  i=0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
-    // Separator
-    if(it != InputVarUse.begin())
-      SPARK_FILE << ", ";
 
-    bool isCnt = CntMap.find(it->first) != CntMap.end();
-    if(isCnt) {
-      SPARK_FILE << "n" << i << ": Long";
-    } else {
-      SPARK_FILE << "n" << i << ": Array[Byte]";
-    }
-  }
-  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it, i++) {
-    // Separator
-    if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
-      SPARK_FILE << ", ";
+  for(auto it = mappingFunctions.begin(); it != mappingFunctions.end(); it++) {
+    auto& info = **it;
 
-    bool isCnt = CntMap.find(it->first) != CntMap.end();
-    if(isCnt) {
-      SPARK_FILE << "n" << i << ": Long";
-    } else {
-      SPARK_FILE << "n" << i << ": Array[Byte]";
-    }
-  }
-  for(unsigned j = 0; j<NbOutputSize; j++, i++)
-    SPARK_FILE << ", n" << i << ": Int";
-  SPARK_FILE << ") : ";
-  if (NbOutputs == 1)
-    SPARK_FILE << "Array[Byte]";
-  else {
-    SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
-    for(unsigned i = 1; i<NbOutputs; i++)
-      SPARK_FILE << ", Array[Byte]";
-    SPARK_FILE << "]";
-  }
-  SPARK_FILE << "\n";
-  SPARK_FILE << "  def mappingWrapper(";
-  i=0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it, i++) {
-    // Separator
-    if(it != InputVarUse.begin())
-      SPARK_FILE << ", ";
+    unsigned NbInputs = info.InputVarUse.size() + info.InputOutputVarUse.size();
+    unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
+    unsigned NbOutputSize = info.OutputVarDef.size();
 
-    bool isCnt = CntMap.find(it->first) != CntMap.end();
-    if(isCnt) {
-      SPARK_FILE << "n" << i << ": Long";
-    } else {
-      SPARK_FILE << "n" << i << ": Array[Byte]";
-    }
-  }
-  for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it, i++) {
-    // Separator
-    if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
-      SPARK_FILE << ", ";
+    if(verbose) llvm::errs() << "NbInput => " << NbInputs << "\n";
+    if(verbose) llvm::errs() << "NbOutput => " << NbOutputs << "\n";
 
-    bool isCnt = CntMap.find(it->first) != CntMap.end();
-    if(isCnt) {
-      SPARK_FILE << "n" << i << ": Long";
-    } else {
-      SPARK_FILE << "n" << i << ": Array[Byte]";
-    }
-  }
-  for(unsigned j = 0; j<NbOutputSize; j++, i++)
-    SPARK_FILE << ", n" << i << ": Int";
-  SPARK_FILE << ") : ";
-  if (NbOutputs == 1)
-    SPARK_FILE << "Array[Byte]";
-  else {
-    SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
-    for(unsigned i = 1; i<NbOutputs; i++)
-      SPARK_FILE << ", Array[Byte]";
-    SPARK_FILE << "]";
-  }
-  SPARK_FILE << " = {\n";
-  SPARK_FILE << "    NativeKernels.loadOnce()\n";
-  SPARK_FILE << "    return mappingMethod(n0";
-  for(unsigned i = 1; i<NbInputs+NbOutputSize; i++)
-    SPARK_FILE << ", n" << i;
-  SPARK_FILE << ")\n";
-  SPARK_FILE << "  }\n\n";
-
-  for(auto it = reductionMap.begin(); it != reductionMap.end(); ++it) {
-    SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
-  }
-
-  for(auto it = ReorderInputVarUse.begin(); it != ReorderInputVarUse.end(); ++it) {
-    unsigned hash = it->first;
-    int NbInputs = it->second.size();
-
-
-
-    SPARK_FILE << "  @native def reorderMethod"<< hash << "(";
-    int i=0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2, i++) {
-      // Separator
-      if(it2 != it->second.begin())
-        SPARK_FILE << ", ";
-
-      bool isCnt = CntMap.find(it2->first) != CntMap.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long";
-      } else {
-        SPARK_FILE << "n" << i << ": Array[Byte]";
-      }
-    }
-    SPARK_FILE << ") : Long\n";
-
-    SPARK_FILE << "  def reorderMethodWrapper"<< hash << "(";
+    SPARK_FILE << "  @native def mappingMethod" << info.Identifier << "(";
     i=0;
-    for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2, i++) {
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
       // Separator
-      if(it2 != it->second.begin())
+      if(it != info.InputVarUse.begin())
         SPARK_FILE << ", ";
 
-      bool isCnt = CntMap.find(it2->first) != CntMap.end();
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
       if(isCnt) {
         SPARK_FILE << "n" << i << ": Long";
       } else {
         SPARK_FILE << "n" << i << ": Array[Byte]";
       }
     }
-    SPARK_FILE << ") : Long";
+    for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
+      // Separator
+      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ": Long";
+      } else {
+        SPARK_FILE << "n" << i << ": Array[Byte]";
+      }
+    }
+    for(unsigned j = 0; j<NbOutputSize; j++, i++)
+      SPARK_FILE << ", n" << i << ": Int";
+    SPARK_FILE << ") : ";
+    if (NbOutputs == 1)
+      SPARK_FILE << "Array[Byte]";
+    else {
+      SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
+      for(unsigned i = 1; i<NbOutputs; i++)
+        SPARK_FILE << ", Array[Byte]";
+      SPARK_FILE << "]";
+    }
+    SPARK_FILE << "\n";
+    SPARK_FILE << "  def mapping" << info.Identifier << "(";
+    i=0;
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+      // Separator
+      if(it != info.InputVarUse.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ": Long";
+      } else {
+        SPARK_FILE << "n" << i << ": Array[Byte]";
+      }
+    }
+    for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
+      // Separator
+      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ": Long";
+      } else {
+        SPARK_FILE << "n" << i << ": Array[Byte]";
+      }
+    }
+    for(unsigned j = 0; j<NbOutputSize; j++, i++)
+      SPARK_FILE << ", n" << i << ": Int";
+    SPARK_FILE << ") : ";
+    if (NbOutputs == 1)
+      SPARK_FILE << "Array[Byte]";
+    else {
+      SPARK_FILE << "Tuple" << NbOutputs << "[Array[Byte]";
+      for(unsigned i = 1; i<NbOutputs; i++)
+        SPARK_FILE << ", Array[Byte]";
+      SPARK_FILE << "]";
+    }
     SPARK_FILE << " = {\n";
     SPARK_FILE << "    NativeKernels.loadOnce()\n";
-    SPARK_FILE << "    return reorderMethod"<< hash << "(n0";
-    for(unsigned i = 1; i<NbInputs; i++)
+    SPARK_FILE << "    return mappingMethod" << info.Identifier << "(n0";
+    for(unsigned i = 1; i<NbInputs+NbOutputSize; i++)
       SPARK_FILE << ", n" << i;
     SPARK_FILE << ")\n";
     SPARK_FILE << "  }\n\n";
-  }
 
+    for(auto it = ReductionMap.begin(); it != ReductionMap.end(); ++it) {
+      SPARK_FILE << "  @native def reduceMethod"<< it->first->getName() << "_" << info.Identifier << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n" ;
+    }
+
+  }
   SPARK_FILE << "}\n\n";
 }
 
@@ -254,8 +214,8 @@ std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
   } else if (const DeclRefExpr *D = dyn_cast<DeclRefExpr>(ExprValue)) {
     const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl());
     int id = IndexMap[VD];
-    SparkExpr += "ByteBuffer.wrap(arg";
-    SparkExpr += std::to_string(id);
+    SparkExpr += "ByteBuffer.wrap(";
+    SparkExpr += VD->getName();
     // FIXME: How about long ?
     SparkExpr += ").order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt";
   } else {
@@ -268,68 +228,67 @@ std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
 }
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
-  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
-  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
-  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
-  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+  auto& TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
   SPARK_FILE << "    // Read each input from cloud-based filesystem\n";
-  for (auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
+  for (auto it = IndexMap.begin(); it != IndexMap.end(); ++it)
   {
-    int id = IndexMap[it->first];
+    const ValueDecl *VD = it->first;
+    int OffloadId = IndexMap[VD];
+    unsigned OffloadType = TypeMap[VD];
+
 
     // Find the bit size of one element
-    QualType varType = it->first->getType();
+    QualType VarType = VD->getType();
 
-    while(varType->isAnyPointerType()) {
-      varType = varType->getPointeeType();
+    while(VarType->isAnyPointerType()) {
+      VarType = VarType->getPointeeType();
     }
-    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
+    int64_t SizeInByte = getContext().getTypeSize(VarType) / 8;
 
-    SPARK_FILE << "    val arg" << id << " = ";
-    if(it->first->getType()->isAnyPointerType())
-      SPARK_FILE << "info.sc.broadcast(";
-    SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
-    if(it->first->getType()->isAnyPointerType())
-      SPARK_FILE << ")";
-    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
-  }
+    if(OffloadType == OMP_TGT_MAPTYPE_TO
+       || OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
 
-  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
-  {
-    int id = IndexMap[it->first];
+      SPARK_FILE << "    var " << VD->getName() << " = ";
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << "info.sc.broadcast(";
+      SPARK_FILE << "fs.read(" << OffloadId << ", " << SizeInByte << ")";
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << ")";
+      SPARK_FILE << "\n";
 
-    // Find the bit size of one element
-    QualType varType = it->first->getType();
+    } else if (OffloadType == OMP_TGT_MAPTYPE_FROM) {
+      SPARK_FILE << "    var " << VD->getName() << " = ";
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << "info.sc.broadcast(";
+      SPARK_FILE << "new Array[Byte](0)";
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << ")";
+      SPARK_FILE << "\n";
+      SPARK_FILE << "    val sizeOf_" << VD->getName() << " = at.get(" << OffloadId << ")\n";
 
-    while(varType->isAnyPointerType()) {
-      varType = varType->getPointeeType();
     }
-    int64_t SizeInByte = getContext().getTypeSize(varType) / 8;
 
-    SPARK_FILE << "    val arg" << id << " = ";
-    if(it->first->getType()->isAnyPointerType())
-      SPARK_FILE << "info.sc.broadcast(";
-    SPARK_FILE << "fs.read(" << id << ", " << SizeInByte << ")";
-    if(it->first->getType()->isAnyPointerType())
-      SPARK_FILE << ")";
-    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
-  }
-
-  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-  {
-    int id = IndexMap[it->first];
-
-    SPARK_FILE << "    val size" << id << " = at.get(" << id << ")";
-    SPARK_FILE << " // Variable " << it->first->getName() <<"\n";
   }
 
   SPARK_FILE << "\n";
-  SPARK_FILE << "    // Generate RDDs of index\n";
+}
+
+void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGenModule::OMPSparkMappingInfo &info) {
+  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  unsigned MappingId = info.Identifier;
+
+  unsigned NbInputs = 0;
+  for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
+    NbInputs += it->second.size();
+
+  SPARK_FILE << "    // omp parallel for\n";
+
+  SPARK_FILE << "    // 1 - Generate RDDs of index\n";
   int NbIndex = 0;
 
-  for (auto it = CntMap.begin(); it != CntMap.end(); ++it)
+  for (auto it = info.CounterInfo.begin(); it != info.CounterInfo.end(); ++it)
   {
     const VarDecl *VarCnt = it->first;
     const Expr *Init = it->second[0];
@@ -339,7 +298,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     const BinaryOperator *BO = cast<BinaryOperator>(CheckOp);
 
-    SPARK_FILE << "    val index" << NbIndex << " = info.sc.parallelize(" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
+    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = info.sc.parallelize(" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
     if(BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
     }
@@ -348,171 +307,157 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     NbIndex++;
   }
 
-  SPARK_FILE << "    val index = index0";
+  SPARK_FILE << "    val index_" << MappingId << " = index_" << MappingId << "_0";
   for(int i=1; i<NbIndex; i++) {
-    SPARK_FILE << ".cartesian(index" << i << ")";
+    SPARK_FILE << ".cartesian(index_" << MappingId << "_" << i << ")";
   }
   SPARK_FILE << "\n"; // FIXME: Inverse with more indexes
 
-  SPARK_FILE << "\n\n";
-}
 
-void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE) {
-  auto& InputVarUse = CGM.OpenMPSupport.getOffloadingInputVarUse();
-  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
-  auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
-  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& CntMap = CGM.OpenMPSupport.getOffloadingCounterInfo();
+  SPARK_FILE << "    // 2 - Perform Map operations\n";
+  SPARK_FILE << "    val mapres_" << MappingId << " = index_" << MappingId << ".map{ new OmpKernel().mapping" << MappingId << "(";
 
-  unsigned NbInputs = 0;
-  for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-    NbInputs += it->second.size();
+  // Assign each argument according to its type
+  int i=1;
+  for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+    bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
 
-  SPARK_FILE << "    // Perform Map operations\n";
-  if (NbInputs == 1)
-    SPARK_FILE << "    val mapres = index.map{ new OmpKernel().mappingWrapper(_) }.persist\n";
-  else {
-    SPARK_FILE << "    val mapres = index.map{ x => new OmpKernel().mappingWrapper(";
-
-    // Assign each argument according to its type
-    int i=1;
-    for(auto it = InputVarUse.begin(); it != InputVarUse.end(); ++it)
-    {
-      bool isCnt = CntMap.find(it->first) != CntMap.end();
-
-      // Separator
-      if(it != InputVarUse.begin())
-        SPARK_FILE << ", ";
-      if(isCnt) {
-        if(CntMap.size() == 1) {
-          SPARK_FILE << "x";
-        } else {
-          SPARK_FILE << "x._" << i;
-          i++;
-        }
+    // Separator
+    if(it != info.InputVarUse.begin())
+      SPARK_FILE << ", ";
+    if(isCnt) {
+      if(info.CounterInfo.size() == 1) {
+        SPARK_FILE << "_";
       } else {
-        int id = IndexMap[it->first];
-        SPARK_FILE << "arg" << id;
-        if(it->first->getType()->isAnyPointerType())
-          SPARK_FILE << ".value";
+        SPARK_FILE << "_._" << i;
+        i++;
       }
+    } else {
+      SPARK_FILE << VD->getName();
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << ".value";
     }
-    for(auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
-    {
-      bool isCnt = CntMap.find(it->first) != CntMap.end();
-
-      // Separator
-      if(!InputVarUse.empty() || it != InputOutputVarUse.begin())
-        SPARK_FILE << ", ";
-      if(isCnt) {
-        if(CntMap.size() == 1) {
-          SPARK_FILE << "x";
-        } else {
-          SPARK_FILE << "x._" << i;
-          i++;
-        }
-      } else {
-        int id = IndexMap[it->first];
-        SPARK_FILE << "arg" << id;
-        if(it->first->getType()->isAnyPointerType())
-          SPARK_FILE << ".value";
-      }
-    }
-    for(auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
-    {
-      int id = IndexMap[it->first];
-      SPARK_FILE << ", size" << id;
-    }
-
-    SPARK_FILE << ") }.persist\n\n";
   }
-  SPARK_FILE << "    mapres.foreachPartition{ x =>  }\n";
-  SPARK_FILE << "    val mapres2 = mapres.repartition(info.getExecutorNumber)\n";
+  for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+    bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
+
+    // Separator
+    if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
+      SPARK_FILE << ", ";
+    if(isCnt) {
+      if(info.CounterInfo.size() == 1) {
+        SPARK_FILE << "_";
+      } else {
+        SPARK_FILE << "_._" << i;
+        i++;
+      }
+    } else {
+      SPARK_FILE << VD->getName();
+      if(VD->getType()->isAnyPointerType())
+        SPARK_FILE << ".value";
+    }
+  }
+
+  for(auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+    int id = IndexMap[VD];
+    SPARK_FILE << ", sizeOf_" << VD->getName();
+  }
+
+  SPARK_FILE << ") }.persist\n";
+  SPARK_FILE << "    mapres_" << MappingId << ".foreachPartition{ x =>  }\n";
+
+  SPARK_FILE << "    // 3 - Merge back the results\n";
+  SPARK_FILE << "    val mapres2_" << MappingId << " = mapres_" << MappingId << ".repartition(info.getExecutorNumber)\n";
+
+  i=0;
+  unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
+
+  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+
+    SPARK_FILE << "    " << VD->getName() << " = ";
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << "info.sc.broadcast(";
+    if(NbOutputs == 1) {
+      // 1 output -> return the result directly
+      SPARK_FILE << "mapres2_" << MappingId;
+    }
+    else if(NbOutputs == 2 || NbOutputs == 3) {
+      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+      SPARK_FILE << "mapres2_" << MappingId << ".map{_._" << i+1 << "}";
+    }
+    else {
+      // More than 3 outputs -> extract each variable from the Collection
+      SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
+    }
+    if(CGM.OpenMPSupport.isReduced(VD))
+      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
+    else
+      SPARK_FILE << ".treeReduce(Util.bitor)";
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << ")";
+    SPARK_FILE << "\n";
+
+    i++;
+  }
+
+  for (auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it)
+  {
+    const VarDecl *VD = it->first;
+
+    SPARK_FILE << "    " << VD->getName() << " = ";
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << "info.sc.broadcast(";
+    if(NbOutputs == 1) {
+      // 1 output -> return the result directly
+      SPARK_FILE << "mapres2_" << MappingId;
+    }
+    else if(NbOutputs == 2 || NbOutputs == 3) {
+      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
+      SPARK_FILE << "mapres2_" << MappingId << ".map{_._" << i+1 << "}";
+    }
+    else {
+      // More than 3 outputs -> extract each variable from the Collection
+      SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
+    }
+    if(CGM.OpenMPSupport.isReduced(VD))
+      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
+    else
+      SPARK_FILE << ".treeReduce(Util.bitor)";
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << ")";
+    SPARK_FILE << "\n";
+
+    i++;
+  }
+  SPARK_FILE << "\n";
 }
 
 void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
-  auto& OutputVarDef = CGM.OpenMPSupport.getOffloadingOutputVarDef();
-  auto& InputOutputVarUse = CGM.OpenMPSupport.getOffloadingInputOutputVarUse();
   auto& IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
-
-  unsigned NbOutputs = OutputVarDef.size() + InputOutputVarUse.size();
+  auto& TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
   SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
-  int i=0;
 
-  for (auto it = OutputVarDef.begin(); it != OutputVarDef.end(); ++it)
+  for (auto it = IndexMap.begin(); it != IndexMap.end(); ++it)
   {
-    int id = IndexMap[it->first];
-    bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
+    const ValueDecl *VD = it->first;
+    int OffloadId = IndexMap[VD];
+    unsigned OffloadType = TypeMap[VD];
 
-    if(NbOutputs == 1) {
-      // 1 output -> return the result directly
-      SPARK_FILE << "    val res" << id << " = mapres2";
+    if (OffloadType == OMP_TGT_MAPTYPE_FROM
+        || OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
+      SPARK_FILE << "    fs.write(" << OffloadId << ", " << VD->getName();
+      if(it->first->getType()->isAnyPointerType())
+        SPARK_FILE << ".value";
+      SPARK_FILE << ")\n";
     }
-    else if(NbOutputs == 2 || NbOutputs == 3) {
-      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-      SPARK_FILE << "    val res" << id << " = mapres2.map { x => x._" << i+1 << "}";
-    }
-    else {
-      // More than 3 outputs -> extract each variable from the Collection
-      SPARK_FILE << "    val res" << id << " = mapres2.map { x => x(" << i << ") }";
-    }
-
-    if(isReduced)
-      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
-    else
-      SPARK_FILE << "\n";
-
-    SPARK_FILE << "    val output" << id << " = res" << id << ".treeReduce(Util.bitor)\n";
-    SPARK_FILE << "\n";
-
-    // Find the bit size of one element
-    QualType varType = it->first->getType();
-
-    while(varType->isAnyPointerType()) {
-      varType = varType->getPointeeType();
-    }
-
-    SPARK_FILE << "    fs.write(" << id << ", output" << id << ")\n";
-    i++;
   }
-
-  for (auto it = InputOutputVarUse.begin(); it != InputOutputVarUse.end(); ++it)
-  {
-    int id = IndexMap[it->first];
-    bool isReduced = CGM.OpenMPSupport.isReduced(it->first);
-
-    if(NbOutputs == 1) {
-      // 1 output -> return the result directly
-      SPARK_FILE << "    val res" << id << " = mapres";
-    }
-    else if(NbOutputs == 2 || NbOutputs == 3) {
-      // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-      SPARK_FILE << "    val res" << id << " = mapres.map { x => x._" << i+1 << "}";
-    }
-    else {
-      // More than 3 outputs -> extract each variable from the Collection
-      SPARK_FILE << "    val res" << id << " = mapres.map { x => x(" << i << ") }";
-    }
-
-    if(isReduced)
-      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< it->first->getName() << "(_, _))\n";
-    else
-      SPARK_FILE << "\n";
-
-    SPARK_FILE << "    val output" << id << " = res" << id << ".treeReduce(Util.bitor)\n";
-    SPARK_FILE << "\n";
-
-    // Find the bit size of one element
-    QualType varType = it->first->getType();
-
-    while(varType->isAnyPointerType()) {
-      varType = varType->getPointeeType();
-    }
-
-    SPARK_FILE << "    fs.write(" << id << ", output" << id << ")\n";
-    i++;
-  }
-
-
 }

@@ -1209,17 +1209,25 @@ public:
   ///
   void EmitOMPDeclareTarget(const OMPDeclareTargetDecl *D);
 
+  struct OMPSparkMappingInfo {
+    llvm::SmallSet<const VarDecl *, 16> Inputs;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputOutputVarUse;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
+    llvm::DenseMap<const VarDecl*, unsigned> InputStyle;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  CounterInfo;
+    llvm::DenseMap<const Expr *, llvm::Value *> KernelArgVars;
+    unsigned Identifier;
+  };
+
   class OpenMPSupportStackTy {
     /// \brief A set of OpenMP threadprivate variables.
     llvm::DenseMap<const Decl *, const Expr *> OpenMPThreadPrivate;
     /// \brief A set of OpenMP private variables.
     typedef llvm::DenseMap<const Decl *, llvm::Value *> OMPPrivateVarsTy;
-    /// \brief A set of OpenMP kernel argument variables.
-    typedef llvm::DenseMap<const Expr *, llvm::Value *> OMPKernelArgVarsTy;
     struct OMPStackElemTy {
       OMPPrivateVarsTy PrivateVars;
       llvm::SmallVector<const Expr *, 8> ExternalVarExpr;
-      OMPKernelArgVarsTy KernelArgVars;
       llvm::BasicBlock *IfEnd;
       Expr *IfClauseCondition;
       llvm::SmallVector<llvm::Value *, 16> offloadingMapArguments;
@@ -1269,16 +1277,12 @@ public:
       Expr *NumTeams;
       Expr *ThreadLimit;
       llvm::Value **WaitDepsArgs;
+
+      OMPSparkMappingInfo *SparkMappingInfo;
+      llvm::SmallVector<OMPSparkMappingInfo *, 16> SparkMappingFunctions;
+
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsIndex;
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsType;
-      llvm::SmallSet<const VarDecl *, 16> OffloadingInputs;
-      llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputOutputVarUse;
-      llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingInputVarUse;
-      llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OffloadingOutputVarDef;
-      llvm::DenseMap<const VarDecl*, unsigned> OffloadingInputStyle;
-      llvm::DenseMap<const Expr*, const Expr*> ReorderMap;
-      llvm::DenseMap<unsigned, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>>> ReorderInputVarUse;
-      llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  OffloadingCounterInfo;
       llvm::SmallVector<const Expr *, 8> OffloadingMapDecls;
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapBasePtrs;
       llvm::SmallVector<llvm::Value *, 8> OffloadingMapPtrs;
@@ -1347,8 +1351,9 @@ public:
     /// otherwise.
     llvm::Value *getOpenMPKernelArgVar(const Expr *VarExpr) {
       if (OpenMPStack.empty()) return 0;
-      if (OpenMPStack.back().KernelArgVars.count(VarExpr) > 0 && OpenMPStack.back().KernelArgVars[VarExpr])
-        return OpenMPStack.back().KernelArgVars[VarExpr];
+      auto *info = getCurrentSparkMappingInfo();
+      if (info != nullptr && info->KernelArgVars.count(VarExpr) > 0 && info->KernelArgVars[VarExpr])
+        return info->KernelArgVars[VarExpr];
       return 0;
     }
     void startOpenMPRegion(bool NewTask) {
@@ -1375,12 +1380,12 @@ public:
     void addOpenMPKernelArgVar(const Expr *VarExpr, llvm::Value *Addr) {
       assert(!OpenMPStack.empty() &&
              "OpenMP private variables region is not started.");
-      OpenMPStack.back().KernelArgVars[VarExpr] = Addr;
+      getCurrentSparkMappingInfo()->KernelArgVars[VarExpr] = Addr;
     }
     void delOpenMPKernelArgVar(const Expr *VarExpr) {
       assert(!OpenMPStack.empty() &&
              "OpenMP private variables region is not started.");
-      OpenMPStack.back().KernelArgVars[VarExpr] = 0;
+      getCurrentSparkMappingInfo()->KernelArgVars[VarExpr] = 0;
     }
     void setIfDest(llvm::BasicBlock *EndBB) {OpenMPStack.back().IfEnd = EndBB;}
     llvm::BasicBlock *takeIfDest() {
@@ -1468,33 +1473,20 @@ public:
     llvm::SmallVector<llvm::Value *, 16> &getOffloadingMapArguments() {
       return OpenMPStack.back().offloadingMapArguments;
     }
-    llvm::SmallSet<const VarDecl*, 16> &getOffloadingInputs() {
-      return OpenMPStack.back().OffloadingInputs;
+    OMPSparkMappingInfo *getCurrentSparkMappingInfo() {
+      return OpenMPStack.back().SparkMappingInfo;
     }
-    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingInputOutputVarUse() {
-      return OpenMPStack.back().OffloadingInputOutputVarUse;
+    llvm::SmallVector<OMPSparkMappingInfo *, 16> &getSparkMappingFunctions() {
+      return OpenMPStack.back().SparkMappingFunctions;
     }
-    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingInputVarUse() {
-      return OpenMPStack.back().OffloadingInputVarUse;
-    }
-    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> &getOffloadingOutputVarDef() {
-      return OpenMPStack.back().OffloadingOutputVarDef;
-    }
-    llvm::DenseMap<const VarDecl*, unsigned> &getOffloadingInputStyle() {
-      return OpenMPStack.back().OffloadingInputStyle;
-    }
-    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>> &getOffloadingCounterInfo() {
-      return OpenMPStack.back().OffloadingCounterInfo;
+    unsigned getSparkMappingIdentifier() {
+      return OpenMPStack.back().SparkMappingInfo->Identifier;
     }
     llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsType();
     llvm::DenseMap<const ValueDecl *, unsigned> &getLastOffloadingMapVarsIndex();
     void syncStack();
-    llvm::DenseMap<const Expr*, const Expr*> &getReorderMap() {
-      return OpenMPStack.back().ReorderMap;
-    }
-    llvm::DenseMap<unsigned, llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>>> &getReorderInputVarUse() {
-      return OpenMPStack.back().ReorderInputVarUse;
-    }
+    void initMapping();
+    void backupMapping();
     int getMapType(const VarDecl* VD);
     void setMapsBegin(bool Flag);
     bool getMapsBegin();

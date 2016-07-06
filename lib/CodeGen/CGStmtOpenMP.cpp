@@ -1298,7 +1298,12 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
         CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
 
     if(isSparkTarget) {
+      CGM.OpenMPSupport.initMapping();
+      // FIXME: Dirty tricks ;-)
+      CGM.OpenMPSupport.syncStack();
       GenerateMappingKernel(S);
+      //EmitSparkJob();
+      CGM.OpenMPSupport.backupMapping();
     } else {
       RunCleanupsScope ExecutedScope(*this);
       // CodeGen for clauses (call start).
@@ -2441,6 +2446,12 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         // No subkind, just emit the captured statement as is
         CGF.EmitStmt(CS->getCapturedStmt());
         break;
+      }
+
+      bool isSparkTarget = isTargetMode &&
+          CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+      if(isSparkTarget) {
+        EmitSparkJob();
       }
 
       if (isTargetMode)
