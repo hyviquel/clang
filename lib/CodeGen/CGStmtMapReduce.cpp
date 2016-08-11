@@ -1048,7 +1048,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
       if(!varType->isAnyPointerType()) {
 
-        // GetPrimitiveArrayCritical
+        // GetByteArrayElements
         std::vector<llvm::Value*> ptr_load_arg_params;
         ptr_load_arg_params.push_back(ptr_env);
         ptr_load_arg_params.push_back(args);
@@ -1069,7 +1069,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
         valuePtr =  CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
 
       } else {
-        // GetElement
+        // GetPrimitiveArrayCritical
         std::vector<llvm::Value*> ptr_load_arg_params;
         ptr_load_arg_params.push_back(ptr_env);
         ptr_load_arg_params.push_back(args);
@@ -1119,7 +1119,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       }
     } else {
 
-      // GetByteArrayElements
+      // GetPrimitiveArrayCritical
       std::vector<llvm::Value*> ptr_load_arg_params;
       ptr_load_arg_params.push_back(ptr_env);
       ptr_load_arg_params.push_back(args);
