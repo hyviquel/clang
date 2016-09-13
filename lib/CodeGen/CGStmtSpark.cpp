@@ -369,8 +369,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
     SPARK_FILE << ", sizeOf_" << VD->getName();
   }
 
-  SPARK_FILE << ") }.persist\n";
-  SPARK_FILE << "    mapres_" << MappingId << ".foreachPartition{ x =>  }\n";
+  SPARK_FILE << ") }\n";
 
   SPARK_FILE << "    // 3 - Merge back the results\n";
   SPARK_FILE << "    val mapres2_" << MappingId << " = mapres_" << MappingId << ".repartition(info.getExecutorNumber)\n";
@@ -400,7 +399,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
     if(CGM.OpenMPSupport.isReduced(VD))
       SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
     else
-      SPARK_FILE << ".treeReduce(Util.bitor)";
+      SPARK_FILE << ".reduce(Util.bitor)";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ")";
     SPARK_FILE << "\n";
@@ -430,7 +429,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
     if(CGM.OpenMPSupport.isReduced(VD))
       SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
     else
-      SPARK_FILE << ".treeReduce(Util.bitor)";
+      SPARK_FILE << ".reduce(Util.bitor)";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ")";
     SPARK_FILE << "\n";
