@@ -394,13 +394,14 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
 
   BUILD_SBT << "name := \"test\"\n"
             << "\n"
-            << "version := \"0.1.0\"\n"
+            << "version := \"0.2.0\"\n"
             << "\n"
-            << "scalaVersion := \"2.10.6\"\n"
+            << "scalaVersion := \"2.11.8\"\n"
             << "\n"
-            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"1.5.0\" % \"provided\"\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"2.0.0\" % \"provided\"\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-sql\" % \"2.0.0\" % \"provided\"\n"
             << "\n"
-            << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.1.0-SNAPSHOT\"\n";
+            << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.2.0-SNAPSHOT\"\n";
 
   llvm::SmallString<128> Path("project");
   llvm::sys::fs::create_directory(Path);
@@ -411,7 +412,7 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
     exit(1);
   }
 
-  PLUGINS_SBT << "addSbtPlugin(\"com.eed3si9n\" % \"sbt-assembly\" % \"0.14.0\")";
+  PLUGINS_SBT << "addSbtPlugin(\"com.eed3si9n\" % \"sbt-assembly\" % \"0.14.3\")";
 
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("sbt"));
   ArgStringList ExtractArgs;

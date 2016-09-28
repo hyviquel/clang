@@ -67,9 +67,12 @@ void CodeGenFunction::EmitSparkJob() {
 
   SPARK_FILE << "  def main(args: Array[String]) {\n"
              << "    \n"
-             << "    val fs = CloudFileSystem.create(args(0), args(1), args(2), args(3))\n"
+             << "    val info = new CloudInfo(args(0), args(1), args(2), args(3), args(4), args(5))\n"
+             << "    val fs = new CloudFileSystem(info.fs, args(3))\n"
              << "    val at = AddressTable.create(fs)\n"
-             << "    val info = new CloudInfo(fs, at)\n"
+             << "    info.init(fs)\n"
+             << "    \n"
+             << "    import info.sqlContext.implicits._\n"
              << "    \n";
 
   EmitSparkInput(SPARK_FILE);
@@ -298,11 +301,11 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
 
     const BinaryOperator *BO = cast<BinaryOperator>(CheckOp);
 
-    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = info.sc.parallelize(" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
+    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
     if(BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
     }
-    SPARK_FILE << " by " << getSparkExprOf(Step) << ")";
+    SPARK_FILE << " by " << getSparkExprOf(Step) << ").toDS()";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
     NbIndex++;
   }
@@ -397,9 +400,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
       SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
     }
     if(CGM.OpenMPSupport.isReduced(VD))
-      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
+      SPARK_FILE << ".reduce{(x, y) => new OmpKernel().reduceMethod"<< VD->getName() << "(x, y)}";
     else
-      SPARK_FILE << ".reduce(Util.bitor)";
+      SPARK_FILE << ".reduce{(x, y) => Util.bitor(x, y)}";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ")";
     SPARK_FILE << "\n";
@@ -427,9 +430,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
       SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
     }
     if(CGM.OpenMPSupport.isReduced(VD))
-      SPARK_FILE << ".reduce(new OmpKernel().reduceMethod"<< VD->getName() << "(_, _))";
+      SPARK_FILE << ".reduce{(x, y) => new OmpKernel().reduceMethod"<< VD->getName() << "(x, y)}";
     else
-      SPARK_FILE << ".reduce(Util.bitor)";
+      SPARK_FILE << ".reduce{(x, y) => Util.bitor(x, y)}";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ")";
     SPARK_FILE << "\n";
