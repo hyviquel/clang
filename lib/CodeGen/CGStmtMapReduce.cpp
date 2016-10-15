@@ -852,6 +852,7 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C, const
 void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   bool verbose = VERBOSE;
 
+
   const OMPParallelForDirective &ForDirective = cast<OMPParallelForDirective>(S);
 
   DefineJNITypes();
@@ -913,15 +914,20 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     Body = For->getBody();
   }
 
-  // Detect input/output expression from the loop body
-  FindKernelArguments Finder(*this);
-  Finder.TraverseStmt(LoopStmt);
+
 
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
 
   // Initialize a new CodeGenFunction used to generate the mapping
   CodeGenFunction CGF(CGM, true);
+
+  //Do we need to do something
+  //CGF.LocalDeclMap.copyFrom(this->LocalDeclMap);
+
+  // Detect input/output expression from the loop body
+  FindKernelArguments Finder(CGF);
+  Finder.TraverseStmt(LoopStmt);
 
   // Get JNI type
   llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");

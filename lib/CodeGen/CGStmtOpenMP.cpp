@@ -1292,11 +1292,11 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
   CGM.OpenMPSupport.setScheduleChunkSize(Schedule, 0);
 
   llvm::BasicBlock *PrecondEndBB = createBasicBlock("omp.loop.precond_end");
-  {
+  { 
+    RunCleanupsScope ExecutedScope(*this);
 
     bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
         CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
-
     if(isSparkTarget) {
       CGM.OpenMPSupport.initMapping();
       // FIXME: Dirty tricks ;-)
@@ -1305,7 +1305,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
       //EmitSparkJob();
       CGM.OpenMPSupport.backupMapping();
     } else {
-      RunCleanupsScope ExecutedScope(*this);
       // CodeGen for clauses (call start).
       for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
            E = S.clauses().end();
