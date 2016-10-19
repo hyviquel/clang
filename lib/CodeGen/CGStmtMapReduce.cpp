@@ -486,17 +486,22 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
 /// records the count at statements where the value may change.
 struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
-  CodeGenFunction &CGF;
   CodeGenModule &CGM;
   bool verbose ;
 
   ArraySubscriptExpr *CurrArrayExpr;
   Expr *CurrArrayIndexExpr;
+  llvm::SmallVector<VarDecl*, 8> LocalVars;
 
-  FindKernelArguments(CodeGenFunction &CGF)
-    : CGF(CGF), CGM(CGF.CGM) {
+  FindKernelArguments(CodeGenModule &CGM)
+    : CGM(CGM) {
     verbose = VERBOSE;
     CurrArrayExpr = NULL;
+  }
+
+  bool VisitVarDecl (VarDecl *VD) {
+    LocalVars.push_back(VD);
+    return true;
   }
 
   bool VisitDeclRefExpr(DeclRefExpr *D) {
@@ -509,6 +514,11 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
         RefExpr = CurrArrayExpr;
       } else {
         RefExpr = D;
+      }
+
+      if(std::find(LocalVars.begin(), LocalVars.end(), VD) != LocalVars.end()) {
+        if (verbose) llvm::errs() << " --> is local\n";
+        return true;
       }
 
       int MapType = CGM.OpenMPSupport.getMapType(VD);
@@ -926,7 +936,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   //CGF.LocalDeclMap.copyFrom(this->LocalDeclMap);
 
   // Detect input/output expression from the loop body
-  FindKernelArguments Finder(CGF);
+  FindKernelArguments Finder(CGM);
   Finder.TraverseStmt(LoopStmt);
 
   // Get JNI type
@@ -975,7 +985,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
         /*Params=*/FuncTy_args,
         /*isVarArg=*/false);
 
-
   std::string FnName = "Java_org_llvm_openmp_OmpKernel_mappingMethod" + std::to_string(info.Identifier);
 
   llvm::Function *MapFn =
@@ -983,7 +992,19 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
                              FnName, &CGM.getModule());
 
   CGF.CurFn = MapFn;
-  CGF.EnsureInsertPoint();
+
+  llvm::BasicBlock *EntryBB = CGF.createBasicBlock("entry", MapFn);
+
+  // Create a marker to make it easy to insert allocas into the entryblock
+  // later.  Don't create this with the builder, because we don't want it
+  // folded.
+  llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
+  CGF.AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", EntryBB);
+  CGF.FirstprivateInsertPt = 0;
+  if (CGF.Builder.isNamePreserving())
+    CGF.AllocaInsertPt->setName("allocapt");
+
+  CGF.Builder.SetInsertPoint(EntryBB);
 
   // Generate useful type and constant
   llvm::PointerType* PointerTy_Int8 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
