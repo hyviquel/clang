@@ -122,7 +122,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
       bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
       if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long";
+        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
       } else {
         SPARK_FILE << "n" << i << ": Array[Byte]";
       }
@@ -134,7 +134,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
       bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
       if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long";
+        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
       } else {
         SPARK_FILE << "n" << i << ": Array[Byte]";
       }
@@ -160,7 +160,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
       bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
       if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long";
+        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
       } else {
         SPARK_FILE << "n" << i << ": Array[Byte]";
       }
@@ -172,7 +172,7 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
       bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
       if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long";
+        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
       } else {
         SPARK_FILE << "n" << i << ": Array[Byte]";
       }
@@ -190,8 +190,33 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     SPARK_FILE << " = {\n";
     SPARK_FILE << "    NativeKernels.loadOnce()\n";
-    SPARK_FILE << "    return mappingMethod" << info.Identifier << "(n0";
-    for(unsigned i = 1; i<NbInputs+NbOutputSize; i++)
+    i=0;
+    SPARK_FILE << "    return mappingMethod" << info.Identifier << "(";
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+      // Separator
+      if(it != info.InputVarUse.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ", bound" << i;
+      } else {
+        SPARK_FILE << "n" << i;
+      }
+    }
+    for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
+      // Separator
+      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
+        SPARK_FILE << ", ";
+
+      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
+      if(isCnt) {
+        SPARK_FILE << "n" << i << ", bound" << i;
+      } else {
+        SPARK_FILE << "n" << i;
+      }
+    }
+    for(unsigned j = 0; j<NbOutputSize; j++, i++)
       SPARK_FILE << ", n" << i;
     SPARK_FILE << ")\n";
     SPARK_FILE << "  }\n\n";
@@ -301,11 +326,14 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
 
     const BinaryOperator *BO = cast<BinaryOperator>(CheckOp);
 
-    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (" << getSparkExprOf(Init) << ".toLong to " << getSparkExprOf(Check);
+    SPARK_FILE << "    val bound_" << MappingId << "_" << NbIndex << " = " << getSparkExprOf(Check) << ".toLong\n";
+    SPARK_FILE << "    val blockSize_" << MappingId << "_" << NbIndex << " = ((bound_" << MappingId << "_" << NbIndex << ").toFloat/info.getParallelism).floor.toLong\n";
+
+    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (" << getSparkExprOf(Init) << ".toLong to bound_" << MappingId << "_" << NbIndex;
     if(BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
     }
-    SPARK_FILE << " by " << getSparkExprOf(Step) << ").toDS()";
+    SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex << ").toDS()";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
     NbIndex++;
   }
@@ -318,10 +346,11 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
 
 
   SPARK_FILE << "    // 2 - Perform Map operations\n";
-  SPARK_FILE << "    val mapres_" << MappingId << " = index_" << MappingId << ".map{ new OmpKernel().mapping" << MappingId << "(";
+  SPARK_FILE << "    val mapres_" << MappingId << " = index_" << MappingId << ".map{ x => new OmpKernel().mapping" << MappingId << "(";
 
   // Assign each argument according to its type
   int i=1;
+  NbIndex = 0;
   for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
   {
     const VarDecl *VD = it->first;
@@ -332,11 +361,12 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
       SPARK_FILE << ", ";
     if(isCnt) {
       if(info.CounterInfo.size() == 1) {
-        SPARK_FILE << "_";
+        SPARK_FILE << "x, Math.min(x+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
       } else {
-        SPARK_FILE << "_._" << i;
+        SPARK_FILE << "x._" << i << ", Math.min(x._" << i << "+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
         i++;
       }
+      NbIndex++;
     } else {
       SPARK_FILE << VD->getName();
       if(VD->getType()->isAnyPointerType())
