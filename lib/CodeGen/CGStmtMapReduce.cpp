@@ -1054,6 +1054,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::SmallVector<llvm::Value*, 8> VecPtrBarraysElem;
   llvm::SmallVector<llvm::Value*, 8> VecPtrValuesElem;
 
+  if(info.CounterInfo.size() > 1) {
+    if (verbose) llvm::errs() << "Do not support more than 1 iteration index for now.";
+    exit(1);
+  }
+
   // Allocate, load and cast input variables (i.e. the arguments)
   for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it){
     const VarDecl *VD = it->first;
