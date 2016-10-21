@@ -879,6 +879,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   const Stmt *Body = S.getAssociatedStmt();
   Stmt *LoopStmt ;
+  const ForStmt *For;
 
   if (const CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
     Body = CS->getCapturedStmt();
@@ -898,7 +899,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       } else
         SkippedContainers = true;
     }
-    const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
+    For = dyn_cast_or_null<ForStmt>(Body);
 
     LoopStmt = const_cast<Stmt*>(Body);
 
@@ -961,6 +962,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
     if(isCnt) {
       FuncTy_args.push_back(IntTy_jlong);
+      FuncTy_args.push_back(IntTy_jlong);
     } else {
       FuncTy_args.push_back(PointerTy_jobject);
     }
@@ -969,6 +971,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it) {
     bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
     if(isCnt) {
+      FuncTy_args.push_back(IntTy_jlong);
       FuncTy_args.push_back(IntTy_jlong);
     } else {
       FuncTy_args.push_back(PointerTy_jobject);
@@ -1054,6 +1057,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::SmallVector<llvm::Value*, 8> VecPtrBarraysElem;
   llvm::SmallVector<llvm::Value*, 8> VecPtrValuesElem;
 
+  llvm::Value* alloca_cnt;
+  llvm::Value* alloca_cnt_bound;
+
   if(info.CounterInfo.size() > 1) {
     if (verbose) llvm::errs() << "Do not support more than 1 iteration index for now.";
     exit(1);
@@ -1066,12 +1072,18 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
     if(isCnt) {
       // FIXME: What about long ??
-      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
-      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
-      CGF.Builder.CreateStore(cast, alloca_cast);
+      alloca_cnt = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast_cnt = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      CGF.Builder.CreateStore(cast_cnt, alloca_cnt);
+
+      args++;
+
+      alloca_cnt_bound = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast_cnt_bound = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      CGF.Builder.CreateStore(cast_cnt_bound, alloca_cnt_bound);
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cnt);
       }
     } else {
 
@@ -1142,12 +1154,18 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
     if(isCnt) {
       // FIXME: What about long ??
-      llvm::AllocaInst* alloca_cast = CGF.Builder.CreateAlloca(IntTy_jint);
-      llvm::Value* cast = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
-      CGF.Builder.CreateStore(cast, alloca_cast);
+      alloca_cnt = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast_cnt = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      CGF.Builder.CreateStore(cast_cnt, alloca_cnt);
+
+      args++;
+
+      alloca_cnt_bound = CGF.Builder.CreateAlloca(IntTy_jint);
+      llvm::Value* cast_cnt_bound = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
+      CGF.Builder.CreateStore(cast_cnt_bound, alloca_cnt_bound);
 
       for(auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cast);
+        CGM.OpenMPSupport.addOpenMPKernelArgVar(*it2, alloca_cnt);
       }
     } else {
 
@@ -1239,11 +1257,103 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
   }
 
-  // Generate kernel code
-  if (const CompoundStmt *S = dyn_cast<CompoundStmt>(Body))
-    CGF.EmitCompoundStmtWithoutScope(*S);
-  else
-    CGF.EmitStmt(Body);
+  JumpDest LoopExit = CGF.getJumpDestInCurrentScope("for.end");
+
+  LexicalScope ForScope(CGF, For->getSourceRange());
+
+  // Evaluate the first part before the loop.
+  //if (For->getInit())
+    //CGF.EmitStmt(For->getInit());
+
+  // Start the loop with a block that tests the condition.
+  // If there's an increment, the continue scope will be overwritten
+  // later.
+  JumpDest Continue = CGF.getJumpDestInCurrentScope("for.cond");
+  llvm::BasicBlock *CondBlock = Continue.getBlock();
+  CGF.EmitBlock(CondBlock);
+
+  CGF.LoopStack.push(CondBlock);
+
+  // If the for loop doesn't have an increment we can just use the
+  // condition as the continue block.  Otherwise we'll need to create
+  // a block for it (in the current scope, i.e. in the scope of the
+  // condition), and that we will become our continue block.
+  if (For->getInc())
+    Continue = CGF.getJumpDestInCurrentScope("for.inc");
+
+  // Store the blocks to use for break and continue.
+  CGF.BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
+
+  // Create a cleanup scope for the condition variable cleanups.
+  LexicalScope ConditionScope(CGF, For->getSourceRange());
+
+  if (For->getCond()) {
+    // If the for statement has a condition scope, emit the local variable
+    // declaration.
+    if (For->getConditionVariable()) {
+      CGF.EmitAutoVarDecl(*For->getConditionVariable());
+    }
+
+    llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
+    // If there are any cleanups between here and the loop-exit scope,
+    // create a block to stage a loop exit along.
+    if (ForScope.requiresCleanups())
+      ExitBlock = CGF.createBasicBlock("for.cond.cleanup");
+
+    // As long as the condition is true, iterate the loop.
+    llvm::BasicBlock *ForBody = CGF.createBasicBlock("for.body");
+
+    // C99 6.8.5p2/p4: The first substatement is executed if the expression
+    // compares unequal to 0.  The condition must be a scalar type.
+
+    llvm::Value *Cond = CGF.Builder.CreateICmpULE(
+          CGF.Builder.CreateLoad(alloca_cnt),
+          CGF.Builder.CreateLoad(alloca_cnt_bound));
+
+    llvm::Value *BoolCondVal = CGF.EvaluateExprAsBool(For->getCond());
+    CGF.Builder.CreateCondBr(
+        Cond, ForBody, ExitBlock);
+
+    if (ExitBlock != LoopExit.getBlock()) {
+      CGF.EmitBlock(ExitBlock);
+      CGF.EmitBranchThroughCleanup(LoopExit);
+    }
+
+    CGF.EmitBlock(ForBody);
+  }
+
+
+  {
+    // Create a separate cleanup scope for the body, in case it is not
+    // a compound statement.
+    RunCleanupsScope BodyScope(CGF);
+
+    // Generate kernel code
+    if (const CompoundStmt *S = dyn_cast<CompoundStmt>(Body))
+      CGF.EmitCompoundStmtWithoutScope(*S);
+    else
+      CGF.EmitStmt(Body);
+  }
+
+  // If there is an increment, emit it next.
+  if (For->getInc()) {
+    CGF.EmitBlock(Continue.getBlock());
+    CGF.EmitStmt(For->getInc());
+  }
+
+  CGF.BreakContinueStack.pop_back();
+
+  ConditionScope.ForceCleanup();
+
+  CGF.EmitStopPoint(For);
+  CGF.EmitBranch(CondBlock);
+
+  ForScope.ForceCleanup();
+
+  CGF.LoopStack.pop();
+
+  // Emit the fall-through block.
+  CGF.EmitBlock(LoopExit.getBlock(), true);
 
   auto ptrValue = VecPtrValues.begin();
 
