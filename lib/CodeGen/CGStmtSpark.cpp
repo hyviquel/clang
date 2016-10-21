@@ -115,29 +115,23 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
 
     SPARK_FILE << "  @native def mappingMethod" << info.Identifier << "(";
     i=0;
-    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+    for(auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it, i++) {
       // Separator
-      if(it != info.InputVarUse.begin())
+      if(it != info.CounterUse.begin())
         SPARK_FILE << ", ";
 
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
-      } else {
-        SPARK_FILE << "n" << i << ": Array[Byte]";
-      }
+      SPARK_FILE << "index" << i << ": Long, bound" << i << ": Long";
+    }
+    i=0;
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
     }
     for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
       // Separator
-      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
-        SPARK_FILE << ", ";
-
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
-      } else {
-        SPARK_FILE << "n" << i << ": Array[Byte]";
-      }
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
     }
     for(unsigned j = 0; j<NbOutputSize; j++, i++)
       SPARK_FILE << ", n" << i << ": Int";
@@ -153,29 +147,23 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << "\n";
     SPARK_FILE << "  def mapping" << info.Identifier << "(";
     i=0;
-    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+    for(auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it, i++) {
       // Separator
-      if(it != info.InputVarUse.begin())
+      if(it != info.CounterUse.begin())
         SPARK_FILE << ", ";
 
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
-      } else {
-        SPARK_FILE << "n" << i << ": Array[Byte]";
-      }
+      SPARK_FILE << "index" << i << ": Long, bound" << i << ": Long";
+    }
+    i=0;
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
     }
     for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
       // Separator
-      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
-        SPARK_FILE << ", ";
-
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ": Long, bound" << i << ": Long";
-      } else {
-        SPARK_FILE << "n" << i << ": Array[Byte]";
-      }
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
     }
     for(unsigned j = 0; j<NbOutputSize; j++, i++)
       SPARK_FILE << ", n" << i << ": Int";
@@ -190,31 +178,25 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     SPARK_FILE << " = {\n";
     SPARK_FILE << "    NativeKernels.loadOnce()\n";
-    i=0;
     SPARK_FILE << "    return mappingMethod" << info.Identifier << "(";
-    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+    i=0;
+    for(auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it, i++) {
       // Separator
-      if(it != info.InputVarUse.begin())
+      if(it != info.CounterUse.begin())
         SPARK_FILE << ", ";
 
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ", bound" << i;
-      } else {
-        SPARK_FILE << "n" << i;
-      }
+      SPARK_FILE << "index" << i << ", bound" << i;
+    }
+    i=0;
+    for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i;
     }
     for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it, i++) {
       // Separator
-      if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
-        SPARK_FILE << ", ";
-
-      bool isCnt = info.CounterInfo.find(it->first) != info.CounterInfo.end();
-      if(isCnt) {
-        SPARK_FILE << "n" << i << ", bound" << i;
-      } else {
-        SPARK_FILE << "n" << i;
-      }
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i;
     }
     for(unsigned j = 0; j<NbOutputSize; j++, i++)
       SPARK_FILE << ", n" << i;
@@ -351,50 +333,36 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
   // Assign each argument according to its type
   int i=1;
   NbIndex = 0;
+  for(auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it, i++) {
+    // Separator
+    if(it != info.CounterUse.begin())
+      SPARK_FILE << ", ";
+    if(info.CounterInfo.size() == 1) {
+      SPARK_FILE << "x, Math.min(x+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
+    } else {
+      SPARK_FILE << "x._" << i << ", Math.min(x._" << i << "+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
+      i++;
+    }
+    NbIndex++;
+  }
   for(auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
   {
     const VarDecl *VD = it->first;
-    bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
-
     // Separator
-    if(it != info.InputVarUse.begin())
-      SPARK_FILE << ", ";
-    if(isCnt) {
-      if(info.CounterInfo.size() == 1) {
-        SPARK_FILE << "x, Math.min(x+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
-      } else {
-        SPARK_FILE << "x._" << i << ", Math.min(x._" << i << "+blockSize_" << MappingId << "_" << NbIndex << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
-        i++;
-      }
-      NbIndex++;
-    } else {
-      SPARK_FILE << VD->getName();
-      if(VD->getType()->isAnyPointerType())
-        SPARK_FILE << ".value";
-    }
+    SPARK_FILE << ", ";
+    SPARK_FILE << VD->getName();
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << ".value";
   }
   for(auto it = info.InputOutputVarUse.begin(); it != info.InputOutputVarUse.end(); ++it)
   {
     const VarDecl *VD = it->first;
-    bool isCnt = info.CounterInfo.find(VD) != info.CounterInfo.end();
-
     // Separator
-    if(!info.InputVarUse.empty() || it != info.InputOutputVarUse.begin())
-      SPARK_FILE << ", ";
-    if(isCnt) {
-      if(info.CounterInfo.size() == 1) {
-        SPARK_FILE << "_";
-      } else {
-        SPARK_FILE << "_._" << i;
-        i++;
-      }
-    } else {
-      SPARK_FILE << VD->getName();
-      if(VD->getType()->isAnyPointerType())
-        SPARK_FILE << ".value";
-    }
+    SPARK_FILE << ", ";
+    SPARK_FILE << VD->getName();
+    if(VD->getType()->isAnyPointerType())
+      SPARK_FILE << ".value";
   }
-
   for(auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end(); ++it)
   {
     const VarDecl *VD = it->first;

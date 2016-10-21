@@ -1214,6 +1214,7 @@ public:
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputOutputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> CounterUse;
     llvm::DenseMap<const VarDecl*, unsigned> InputStyle;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  CounterInfo;
     llvm::DenseMap<const Expr *, llvm::Value *> KernelArgVars;
