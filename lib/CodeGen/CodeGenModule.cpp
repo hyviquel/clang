@@ -3966,8 +3966,8 @@ CodeGenModule::OpenMPSupportStackTy::OMPStackElemTy::OMPStackElemTy(
       Mergeable(false), Schedule(0), ChunkSize(0), NewTask(false),
       Untied(false), HasLastPrivate(false), TaskPrivateTy(0), TaskPrivateQTy(),
       TaskPrivateBase(0), NumTeams(0), ThreadLimit(0), WaitDepsArgs(0),
-      MapsBegin(0), MapsEnd(0), OffloadingDevice(0),
-      OffloadingHostFunctionCall(0) {}
+      OffloadingHostFunctionCall(0), MapsBegin(0), MapsEnd(0), OffloadingDevice(0), CurrentIdentifier(0),
+      SparkMappingInfo(new OMPSparkMappingInfo) {}
 
 CodeGenFunction &CodeGenModule::OpenMPSupportStackTy::getCGFForReductionFunction() {
   if (!OpenMPStack.back().RedCGF) {
@@ -4011,6 +4011,11 @@ CodeGenModule::OpenMPSupportStackTy::getReductionRecVar(CodeGenFunction &CGF) {
   return OpenMPStack.back().ReductionRecVar;
 }
 
+llvm::DenseMap<const VarDecl *, unsigned>
+&CodeGenModule::OpenMPSupportStackTy::getReductionMap() {
+  return OpenMPStack.back().ReductionMap;
+}
+
 llvm::Type *
 CodeGenModule::OpenMPSupportStackTy::getReductionRec() {
   assert(OpenMPStack.back().ReductionRec &&
@@ -4040,6 +4045,11 @@ unsigned
 CodeGenModule::OpenMPSupportStackTy::getReductionVarIdx(const VarDecl *VD) {
   assert (OpenMPStack.back().ReductionMap.count(VD) > 0 && "No reduction var.");
   return OpenMPStack.back().ReductionMap[VD];
+}
+
+bool
+CodeGenModule::OpenMPSupportStackTy::isReduced(const VarDecl *VD) {
+  return OpenMPStack.back().ReductionMap.count(VD) > 0;
 }
 
 llvm::Value *CodeGenModule::OpenMPSupportStackTy::getReductionSwitch() {
@@ -4373,18 +4383,90 @@ llvm::Constant *CodeGenModule::GetAddrOfRTTIDescriptor(QualType Ty,
   return getCXXABI().getAddrOfRTTIDescriptor(Ty);
 }
 void CodeGenModule::OpenMPSupportStackTy::addOffloadingMap(const Expr* DExpr, llvm::Value *BasePtr, llvm::Value *Ptr, llvm::Value *Size, unsigned Type){
+  unsigned id = getOffloadingMapCurrentIdentifier();
   OpenMPStack.back().OffloadingMapDecls.push_back(DExpr);
   OpenMPStack.back().OffloadingMapBasePtrs.push_back(BasePtr);
   OpenMPStack.back().OffloadingMapPtrs.push_back(Ptr);
   OpenMPStack.back().OffloadingMapSizes.push_back(Size);
   OpenMPStack.back().OffloadingMapTypes.push_back(Type);
+  OpenMPStack.back().OffloadingMapIdentifiers.push_back(id);
 }
-void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types){
+void CodeGenModule::OpenMPSupportStackTy::addOffloadingMapVariable(const ValueDecl* VD, unsigned Type){
+  OpenMPStack.back().OffloadingMapVarsType[VD] = Type;
+  OpenMPStack.back().OffloadingMapVarsIndex[VD] = getOffloadingMapCurrentIdentifier();
+}
+void CodeGenModule::OpenMPSupportStackTy::getOffloadingMapArrays(ArrayRef<const Expr*> &DExprs, ArrayRef<llvm::Value*> &BasePtrs, ArrayRef<llvm::Value*> &Ptrs, ArrayRef<llvm::Value*> &Sizes, ArrayRef<unsigned> &Types, ArrayRef<unsigned> &Identifiers){
   DExprs = OpenMPStack.back().OffloadingMapDecls;
   BasePtrs = OpenMPStack.back().OffloadingMapBasePtrs;
   Ptrs  = OpenMPStack.back().OffloadingMapPtrs;
   Sizes = OpenMPStack.back().OffloadingMapSizes;
   Types = OpenMPStack.back().OffloadingMapTypes;
+  Identifiers = OpenMPStack.back().OffloadingMapIdentifiers;
+}
+llvm::DenseMap<const ValueDecl *, unsigned> &CodeGenModule::OpenMPSupportStackTy::getLastOffloadingMapVarsType() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVarsType.size() > 0) {
+      return I->OffloadingMapVarsType;
+    }
+  }
+}
+llvm::DenseMap<const ValueDecl *, unsigned> &CodeGenModule::OpenMPSupportStackTy::getLastOffloadingMapVarsIndex() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVarsIndex.size() > 0) {
+      return I->OffloadingMapVarsIndex;
+    }
+  }
+}
+void CodeGenModule::OpenMPSupportStackTy::syncStack() {
+  for (OMPStackTy::reverse_iterator I = OpenMPStack.rbegin(),
+                                    E = OpenMPStack.rend();
+       I != E; ++I) {
+    if (I->OffloadingMapVarsIndex.size() > 0) {
+      OpenMPStack.back().CurrentIdentifier = I->CurrentIdentifier;
+      OpenMPStack.back().SparkMappingInfo->Identifier = I->SparkMappingInfo->Identifier;
+      // Sync type
+      for(auto it = I->OffloadingMapVarsType.begin(); it != I->OffloadingMapVarsType.end(); it++) {
+        OpenMPStack.back().OffloadingMapVarsType[it->first] = it->second;
+      }
+      // Sync index
+      for(auto it = I->OffloadingMapVarsIndex.begin(); it != I->OffloadingMapVarsIndex.end(); it++) {
+        OpenMPStack.back().OffloadingMapVarsIndex[it->first] = it->second;
+      }
+
+      return;
+    }
+  }
+}
+void CodeGenModule::OpenMPSupportStackTy::initMapping() {
+  //OpenMPStack.back().SparkMappingInfo = new OpenMPSupportStackTy::OMPSparkMappingInfo;
+}
+void CodeGenModule::OpenMPSupportStackTy::backupMapping() {
+  for(OMPStackElemTy& elt : OpenMPStack) {
+    if (elt.OffloadingMapVarsIndex.size() > 0) {
+      elt.SparkMappingFunctions.push_back(OpenMPStack.back().SparkMappingInfo);
+      elt.CurrentIdentifier = OpenMPStack.back().CurrentIdentifier;
+      elt.SparkMappingInfo->Identifier = OpenMPStack.back().SparkMappingInfo->Identifier + 1;
+      // Sync type
+      elt.OffloadingMapVarsType = OpenMPStack.back().OffloadingMapVarsType;
+      elt.OffloadingMapVarsIndex = OpenMPStack.back().OffloadingMapVarsIndex;
+      return;
+    }
+  }
+
+
+  //OpenMPStack[OpenMPStack.size()-2].SparkMappingFunctions.push_back(OpenMPStack.back().SparkMappingInfo);
+}
+int CodeGenModule::OpenMPSupportStackTy::getMapType(const VarDecl* VD){
+  for(OMPStackElemTy& elt : OpenMPStack) {
+    if(elt.OffloadingMapVarsType.find(VD) != elt.OffloadingMapVarsType.end()) {
+      return elt.OffloadingMapVarsType[VD];
+    }
+  }
+  return -1;
 }
 void CodeGenModule::OpenMPSupportStackTy::setMapsBegin(bool Flag){
   OpenMPStack.back().MapsBegin = Flag;

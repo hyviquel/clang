@@ -82,5 +82,6 @@ add_clang_library(clangBasic
   VirtualFileSystem.cpp
   Warnings.cpp
   ${version_inc}
+  ${INC_FILES}
   )
 

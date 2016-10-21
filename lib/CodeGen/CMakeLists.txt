@@ -51,6 +51,7 @@ add_clang_library(clangCodeGen
   CGExprComplex.cpp
   CGExprConstant.cpp
   CGExprScalar.cpp
+  CGJNI.cpp
   CGLoopInfo.cpp
   CGObjC.cpp
   CGObjCGNU.cpp
@@ -68,6 +69,8 @@ add_clang_library(clangCodeGen
   CodeGenFunction.cpp
   CodeGenModule.cpp
   CodeGenPGO.cpp
+  CGStmtSpark.cpp
+  CGStmtMapReduce.cpp
   CodeGenTBAA.cpp
   CodeGenTypes.cpp
   CoverageMappingGen.cpp

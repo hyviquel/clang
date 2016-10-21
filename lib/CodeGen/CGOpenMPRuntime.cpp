@@ -21,6 +21,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/ADT/BitVector.h"
 
 #include "llvm/Bitcode/ReaderWriter.h"
@@ -587,6 +588,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -600,6 +602,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_nowait() {
       int32_t, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<void **, false>::get(C), llvm::TypeBuilder<int64_t *,
       false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t *, false>::get(C),
       llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
@@ -618,6 +621,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_teams() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t, false>::get(C),
                           llvm::TypeBuilder<int32_t, false>::get(C)};
 
@@ -633,6 +637,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_teams_nowait() {
       int32_t, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<void **, false>::get(C), llvm::TypeBuilder<int64_t *,
       false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t *, false>::get(C),
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<int32_t,
       false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
@@ -650,6 +655,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_begin() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -663,7 +669,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_begin_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 
@@ -679,6 +686,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_end() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -692,7 +700,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_end_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 
@@ -708,6 +717,7 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_update() {
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<void **, false>::get(C),
                           llvm::TypeBuilder<int64_t *, false>::get(C),
+                          llvm::TypeBuilder<int32_t *, false>::get(C),
                           llvm::TypeBuilder<int32_t *, false>::get(C)};
 
   llvm::FunctionType *FT = llvm::FunctionType::get(
@@ -721,7 +731,8 @@ llvm::Constant *CGOpenMPRuntime::Get_target_data_update_nowait() {
       llvm::TypeBuilder<int32_t, false>::get(C), llvm::TypeBuilder<
       void **, false>::get(C), llvm::TypeBuilder<void **, false>::get(C),
       llvm::TypeBuilder<int64_t *, false>::get(C), llvm::TypeBuilder<int32_t *,
-      false>::get(C), llvm::TypeBuilder<int32_t, false>::get(C),
+      false>::get(C), llvm::TypeBuilder<int32_t *, false>::get(C),
+      llvm::TypeBuilder<int32_t, false>::get(C),
       getKMPDependInfoType()->getPointerTo(), llvm::TypeBuilder<int32_t,
       false>::get(C), getKMPDependInfoType()->getPointerTo() };
 
@@ -1425,6 +1436,13 @@ llvm::Constant* CGOpenMPRuntime::GetDeviceImageEndPointer(
           + Twine(LegalizeTripleString(TargetTriple)));
 }
 
+/// Return a string with the section name.
+///
+std::string CGOpenMPRuntime::GetSectionName() const {
+  bool isMachO = llvm::Triple(CGM.getModule().getTargetTriple()).isOSBinFormatMachO();
+  return isMachO ? "__DATA,.omptgt_hst_entr" : ".omptgt_hst_entr";
+}
+
 /// Return a string with the mangled name of a target region for the given
 /// module and target region index
 ///
@@ -1829,7 +1847,7 @@ llvm::GlobalVariable *CGOpenMPRuntime::CreateHostPtrForCurrentTargetRegion(
       Twine(Name) + Twine("_entry"));
 
   // The entry has to be created in the section the linker expects it to be
-  Entry->setSection(".openmptgt_host_entries");
+  Entry->setSection(GetSectionName());
   // We can't have any padding between symbols, so we need to have 1-byte
   // alignment
   Entry->setAlignment(1);
@@ -1891,9 +1909,8 @@ llvm::GlobalVariable *CGOpenMPRuntime::CreateHostEntryForTargetGlobal(
   llvm::GlobalVariable *Entry = new llvm::GlobalVariable(
       M, EntryTy, true, llvm::GlobalValue::ExternalLinkage, EntryInit,
       Twine(Name) + Twine("_entry"));
-
   // The entry has to be created in the section the linker expects it to be
-  Entry->setSection(".openmptgt_host_entries");
+  Entry->setSection(GetSectionName());
   // We can't have any padding between symbols, so we need to have 1-byte
   // alignment
   Entry->setAlignment(1);
@@ -4651,6 +4668,25 @@ public:
   }
 }; // class CGOpenMPRuntime_NVPTX
 
+/// Target specific runtime hacks
+class CGOpenMPRuntime_Spark: public CGOpenMPRuntime {
+
+public:
+
+  CGOpenMPRuntime_Spark(CodeGenModule &CGM)
+       : CGOpenMPRuntime(CGM) {
+
+  }
+
+  bool requiresMicroTaskForTeams(){
+    return false;
+  }
+  bool requiresMicroTaskForParallel(){
+    return false;
+  }
+
+}; // class CGOpenMPRuntime_Spark
+
 ///===---------------
 ///
 /// Create runtime for the target used in the Module
@@ -4661,7 +4697,12 @@ CGOpenMPRuntime *CodeGen::CreateOpenMPRuntime(CodeGenModule &CGM) {
 
   switch (CGM.getTarget().getTriple().getArch()) {
   default:
-    return new CGOpenMPRuntime(CGM);
+    switch (CGM.getTarget().getTriple().getEnvironment()) {
+    default:
+      return new CGOpenMPRuntime(CGM);
+    case llvm::Triple::Spark:
+      return new CGOpenMPRuntime_Spark(CGM);
+    }
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
     return new CGOpenMPRuntime_NVPTX(CGM);

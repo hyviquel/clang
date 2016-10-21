@@ -1906,16 +1906,19 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   if (const auto *VD = dyn_cast<VarDecl>(ND)) {
     // CodeGen for threadprivate variables.
     if (getLangOpts().OpenMP) {
-      if (llvm::Value *Val =
+      if (llvm::Value *Val = (CGM.OpenMPSupport.getOpenMPKernelArgVar(E)))
+        return MakeAddrLValue(Val, T, Alignment);
+      else if (llvm::Value *Val =
               CGM.getOpenMPRuntime().CreateOpenMPThreadPrivateCached(
                   VD, E->getExprLoc(), *this))
         return MakeAddrLValue(Val, T, Alignment);
       // CodeGen for OpenMP private variables - works only in CapturedStmt.
       else if (llvm::Value *Val = CGM.OpenMPSupport.getOpenMPPrivateVar(VD))
         return MakeAddrLValue(Val, T, Alignment);
-      else if (CapturedStmtInfo)
+      else if (CapturedStmtInfo) {
         if (llvm::Value *Val = CapturedStmtInfo->getCachedVar(VD))
           return MakeAddrLValue(Val, T, Alignment);
+      }
     }
 
     // Global Named registers access via intrinsics only
@@ -2444,6 +2447,7 @@ static const Expr *isSimpleArrayDecayOperand(const Expr *E) {
 
 LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
                                                bool Accessed) {
+
   // The index must always be an integer, which is not an aggregate.  Emit it.
   llvm::Value *Idx = EmitScalarExpr(E->getIdx());
   QualType IdxTy  = E->getIdx()->getType();

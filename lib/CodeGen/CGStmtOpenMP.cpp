@@ -36,6 +36,9 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/CallSite.h"
+
+#include "clang/AST/RecursiveASTVisitor.h"
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -1227,9 +1230,9 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
   // OMPD_distribute and OMPD_parallel_for_simd directives intentionally and
   // HasSimd is processed for OMPD_parallel_for_simd part.
   bool HasSimd = DKind == OMPD_parallel_for_simd || DKind == OMPD_for_simd ||
-                 DKind == OMPD_distribute_simd ||
-                 DKind == OMPD_teams_distribute_simd ||
-                 DKind == OMPD_target_teams_distribute_simd;
+      DKind == OMPD_distribute_simd ||
+      DKind == OMPD_teams_distribute_simd ||
+      DKind == OMPD_target_teams_distribute_simd;
   CGPragmaOmpSimd SimdWrapper(&S);
   llvm::Function *BodyFunction = 0;
   bool SeparateLastIter = false;
@@ -1244,30 +1247,30 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
 
   // CodeGen for clauses (task init).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                       E = S.clauses().end();
+       E = S.clauses().end();
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitInitOMPClause(*(*I), S);
 
   // CodeGen for clauses (task init).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                       E = S.clauses().end();
+       E = S.clauses().end();
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitAfterInitOMPClause(*(*I), S);
 
   bool IsDistributeLoop = DKind == OMPD_distribute ||
-                          DKind == OMPD_distribute_simd ||
-                          DKind == OMPD_distribute_parallel_for ||
-                          DKind == OMPD_distribute_parallel_for_simd ||
-                          DKind == OMPD_teams_distribute_parallel_for ||
-                          DKind == OMPD_teams_distribute_parallel_for_simd ||
-                          DKind == OMPD_target_teams_distribute_parallel_for ||
-                          DKind == OMPD_target_teams_distribute_parallel_for_simd ||
-                          DKind == OMPD_teams_distribute ||
-                          DKind == OMPD_teams_distribute_simd ||
-                          DKind == OMPD_target_teams_distribute ||
-                          DKind == OMPD_target_teams_distribute_simd;
+      DKind == OMPD_distribute_simd ||
+      DKind == OMPD_distribute_parallel_for ||
+      DKind == OMPD_distribute_parallel_for_simd ||
+      DKind == OMPD_teams_distribute_parallel_for ||
+      DKind == OMPD_teams_distribute_parallel_for_simd ||
+      DKind == OMPD_target_teams_distribute_parallel_for ||
+      DKind == OMPD_target_teams_distribute_parallel_for_simd ||
+      DKind == OMPD_teams_distribute ||
+      DKind == OMPD_teams_distribute_simd ||
+      DKind == OMPD_target_teams_distribute ||
+      DKind == OMPD_target_teams_distribute_simd;
   int Schedule = KMP_SCH_DEFAULT;
   if (!IsDistributeLoop) {
     bool Ordered = CGM.OpenMPSupport.getOrdered();
@@ -1289,140 +1292,151 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
   CGM.OpenMPSupport.setScheduleChunkSize(Schedule, 0);
 
   llvm::BasicBlock *PrecondEndBB = createBasicBlock("omp.loop.precond_end");
-  {
+  { 
     RunCleanupsScope ExecutedScope(*this);
-    // CodeGen for clauses (call start).
-    for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                         E = S.clauses().end();
-         I != E; ++I)
-      if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
-        EmitPreOMPClause(*(*I), S);
 
-    const Expr *ChunkSize;
-    CGM.OpenMPSupport.getScheduleChunkSize(Schedule, ChunkSize);
-    OpenMPDirectiveKind Kind = S.getDirectiveKind();
-    bool IsComplexParallelLoop =
-        Kind == OMPD_distribute_parallel_for ||
-        Kind == OMPD_distribute_parallel_for_simd ||
-        Kind == OMPD_teams_distribute_parallel_for ||
-        Kind == OMPD_teams_distribute_parallel_for_simd ||
-        Kind == OMPD_target_teams_distribute_parallel_for ||
-        Kind == OMPD_target_teams_distribute_parallel_for_simd;
-    bool IsInnerLoopGen = IsComplexParallelLoop && DKind != Kind;
-    bool IsStaticSchedule = Schedule == KMP_SCH_STATIC_CHUNKED ||
-                            Schedule == KMP_SCH_STATIC ||
-                            Schedule == KMP_SCH_DISTRIBUTE_STATIC_CHUNKED ||
-                            Schedule == KMP_SCH_DISTRIBUTE_STATIC;
-    // CodeGen for "omp for {Associated statement}".
-    {
-      llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
-      llvm::Value *GTid =
-          OPENMPRTL_THREADNUM(S.getLocStart(), *this);
-      const Expr *IterVar = getNewIterVarFromLoopDirective(&S);
-      QualType QTy = IterVar->getType();
-      uint64_t TypeSize = 32;
-      if (getContext().getTypeSize(QTy) > TypeSize)
-        TypeSize = 64;
-      bool isSigned = true;
-      if (QTy->hasUnsignedIntegerRepresentation())
-        isSigned = false;
-      llvm::Type *VarTy = TypeSize == 32 ? Int32Ty : Int64Ty;
-      llvm::Value *LB = 0;
-      llvm::Value *UB = 0;
-      llvm::Value *GlobalUB = 0;
-      // Generate loop for inner 'for' directive
-      if (IsInnerLoopGen) {
-        LB = EmitScalarExpr(getLowerBoundFromLoopDirective(&S));
-        UB = EmitScalarExpr(getUpperBoundFromLoopDirective(&S));
-      } else {
-        LB = llvm::Constant::getNullValue(VarTy);
-        UB = EmitScalarExpr(getNewIterEndFromLoopDirective(&S));
-      }
-      GlobalUB = UB;
+    bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+        CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+    if(isSparkTarget) {
+      CGM.OpenMPSupport.initMapping();
+      // FIXME: Dirty tricks ;-)
+      CGM.OpenMPSupport.syncStack();
+      GenerateMappingKernel(S);
+      //EmitSparkJob();
+      CGM.OpenMPSupport.backupMapping();
+    } else {
+      // CodeGen for clauses (call start).
+      for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
+           E = S.clauses().end();
+           I != E; ++I)
+        if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
+          EmitPreOMPClause(*(*I), S);
 
-      llvm::AllocaInst *GlobalUBStack = CreateMemTemp(
+      const Expr *ChunkSize;
+      CGM.OpenMPSupport.getScheduleChunkSize(Schedule, ChunkSize);
+      OpenMPDirectiveKind Kind = S.getDirectiveKind();
+      bool IsComplexParallelLoop =
+          Kind == OMPD_distribute_parallel_for ||
+          Kind == OMPD_distribute_parallel_for_simd ||
+          Kind == OMPD_teams_distribute_parallel_for ||
+          Kind == OMPD_teams_distribute_parallel_for_simd ||
+          Kind == OMPD_target_teams_distribute_parallel_for ||
+          Kind == OMPD_target_teams_distribute_parallel_for_simd;
+      bool IsInnerLoopGen = IsComplexParallelLoop && DKind != Kind;
+      bool IsStaticSchedule = Schedule == KMP_SCH_STATIC_CHUNKED ||
+          Schedule == KMP_SCH_STATIC ||
+          Schedule == KMP_SCH_DISTRIBUTE_STATIC_CHUNKED ||
+          Schedule == KMP_SCH_DISTRIBUTE_STATIC;
+      // CodeGen for "omp for {Associated statement}".
+      {
+        llvm::Value *Loc = OPENMPRTL_LOC(S.getLocStart(), *this);
+        llvm::Value *GTid =
+            OPENMPRTL_THREADNUM(S.getLocStart(), *this);
+        const Expr *IterVar = getNewIterVarFromLoopDirective(&S);
+        QualType QTy = IterVar->getType();
+        uint64_t TypeSize = 32;
+        if (getContext().getTypeSize(QTy) > TypeSize)
+          TypeSize = 64;
+        bool isSigned = true;
+        if (QTy->hasUnsignedIntegerRepresentation())
+          isSigned = false;
+        llvm::Type *VarTy = TypeSize == 32 ? Int32Ty : Int64Ty;
+        llvm::Value *LB = 0;
+        llvm::Value *UB = 0;
+        llvm::Value *GlobalUB = 0;
+        // Generate loop for inner 'for' directive
+        if (IsInnerLoopGen) {
+          LB = EmitScalarExpr(getLowerBoundFromLoopDirective(&S));
+          UB = EmitScalarExpr(getUpperBoundFromLoopDirective(&S));
+        } else {
+          LB = llvm::Constant::getNullValue(VarTy);
+          UB = EmitScalarExpr(getNewIterEndFromLoopDirective(&S));
+        }
+        GlobalUB = UB;
+
+        llvm::AllocaInst *GlobalUBStack = CreateMemTemp(
               getNewIterEndFromLoopDirective(&S)->getType(), "global.ub.stack");
-      Builder.CreateStore(UB, GlobalUBStack);
+        Builder.CreateStore(UB, GlobalUBStack);
 
 #ifdef DEBUG
-      llvm::AllocaInst *DebugUB = CreateMemTemp(
-          getNewIterEndFromLoopDirective(&S)->getType(), "debug.ub");
-      Builder.CreateStore(UB, DebugUB);
+        llvm::AllocaInst *DebugUB = CreateMemTemp(
+              getNewIterEndFromLoopDirective(&S)->getType(), "debug.ub");
+        Builder.CreateStore(UB, DebugUB);
 #endif
-      UB = Builder.CreateIntCast(UB, VarTy, isSigned);
-      llvm::Value *Chunk;
-      if (ChunkSize) {
-        Chunk = EmitScalarExpr(ChunkSize);
-        Chunk = Builder.CreateIntCast(Chunk, VarTy, true);
-      } else {
-        Chunk = llvm::Constant::getNullValue(VarTy);
-      }
-      llvm::BasicBlock *EndBB = createBasicBlock("omp.loop.end");
-      llvm::BasicBlock *OMPLoopBB = 0; // createBasicBlock("omp.loop.begin");
-      llvm::AllocaInst *PLast = CreateTempAlloca(Int32Ty, "last");
-      PLast->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(Int32Ty));
-      InitTempAlloca(PLast, IsStaticSchedule ? Builder.getInt32(1)
-                                             : Builder.getInt32(0));
-      llvm::AllocaInst *PLB = CreateTempAlloca(VarTy, "lb");
-      PLB->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
-      Builder.CreateStore(LB, PLB);
-      llvm::AllocaInst *PUB = CreateTempAlloca(VarTy, "ub");
-      PUB->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
-      Builder.CreateStore(UB, PUB);
-      llvm::AllocaInst *PSt = CreateTempAlloca(VarTy, "st");
-      PSt->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
-      InitTempAlloca(PSt, TypeSize == 32 ? Builder.getInt32(1)
-                                         : Builder.getInt64(1));
-      llvm::AllocaInst *Private = CreateMemTemp(QTy, ".idx.");
-      llvm::Type *IdxTy =
-          cast<llvm::PointerType>(Private->getType())->getElementType();
-      llvm::BasicBlock *MainBB;
-      llvm::BasicBlock *FiniBB = 0;
-
-      const Stmt *Body = S.getAssociatedStmt();
-      ArrayRef<Expr *> Arr = getCountersFromLoopDirective(&S);
-      if (const CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
-        Body = CS->getCapturedStmt();
-      const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(IterVar)->getDecl());
-      CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
-      for (unsigned I = 0; I < getCollapsedNumberFromLoopDirective(&S); ++I) {
-        RunCleanupsScope InitScope(*this);
-        const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(Arr[I])->getDecl());
-        bool SkippedContainers = false;
-        while (!SkippedContainers) {
-          if (const AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
-            Body = AS->getSubStmt();
-          else if (const CompoundStmt *CS =
-                       dyn_cast_or_null<CompoundStmt>(Body)) {
-            if (CS->size() != 1) {
-              SkippedContainers = true;
-            } else {
-              Body = CS->body_back();
-            }
-          } else
-            SkippedContainers = true;
+        UB = Builder.CreateIntCast(UB, VarTy, isSigned);
+        llvm::Value *Chunk;
+        if (ChunkSize) {
+          Chunk = EmitScalarExpr(ChunkSize);
+          Chunk = Builder.CreateIntCast(Chunk, VarTy, true);
+        } else {
+          Chunk = llvm::Constant::getNullValue(VarTy);
         }
-        const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
-        Body = For->getBody();
-        if (CGM.OpenMPSupport.getTopOpenMPPrivateVar(VD))
-          continue;
-        QualType QTy = Arr[I]->getType();
-        llvm::AllocaInst *Private =
-            CreateMemTemp(QTy, CGM.getMangledName(VD) + ".private.");
-        CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
-        llvm::BasicBlock *PrecondBB = createBasicBlock("omp.loop.precond");
-        if (isa<DeclStmt>(For->getInit()))
-          EmitAnyExprToMem(VD->getAnyInitializer(), Private,
-                           VD->getType().getQualifiers(),
-                           /*IsInitializer=*/true);
-        else
-          EmitStmt(For->getInit());
-        EmitBranchOnBoolExpr(For->getCond(), PrecondBB, PrecondEndBB, 0);
-        EmitBlock(PrecondBB);
-      }
+        llvm::BasicBlock *EndBB = createBasicBlock("omp.loop.end");
+        llvm::BasicBlock *OMPLoopBB = 0; // createBasicBlock("omp.loop.begin");
+        llvm::AllocaInst *PLast = CreateTempAlloca(Int32Ty, "last");
+        PLast->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(Int32Ty));
+        InitTempAlloca(PLast, IsStaticSchedule ? Builder.getInt32(1)
+                                               : Builder.getInt32(0));
+        llvm::AllocaInst *PLB = CreateTempAlloca(VarTy, "lb");
+        PLB->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
+        Builder.CreateStore(LB, PLB);
+        llvm::AllocaInst *PUB = CreateTempAlloca(VarTy, "ub");
+        PUB->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
+        Builder.CreateStore(UB, PUB);
+        llvm::AllocaInst *PSt = CreateTempAlloca(VarTy, "st");
+        PSt->setAlignment(CGM.getDataLayout().getPrefTypeAlignment(VarTy));
+        InitTempAlloca(PSt, TypeSize == 32 ? Builder.getInt32(1)
+                                           : Builder.getInt64(1));
+        llvm::AllocaInst *Private = CreateMemTemp(QTy, ".idx.");
+        llvm::Type *IdxTy =
+            cast<llvm::PointerType>(Private->getType())->getElementType();
+        llvm::BasicBlock *MainBB;
+        llvm::BasicBlock *FiniBB = 0;
 
-      if (IsStaticSchedule) {
-        llvm::Value *RealArgs[] = {
+        const Stmt *Body = S.getAssociatedStmt();
+        ArrayRef<Expr *> Arr = getCountersFromLoopDirective(&S);
+        if (const CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
+          Body = CS->getCapturedStmt();
+        const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(IterVar)->getDecl());
+        CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
+        for (unsigned I = 0; I < getCollapsedNumberFromLoopDirective(&S); ++I) {
+          RunCleanupsScope InitScope(*this);
+          const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(Arr[I])->getDecl());
+          bool SkippedContainers = false;
+          while (!SkippedContainers) {
+            if (const AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
+              Body = AS->getSubStmt();
+            else if (const CompoundStmt *CS =
+                     dyn_cast_or_null<CompoundStmt>(Body)) {
+              if (CS->size() != 1) {
+                SkippedContainers = true;
+              } else {
+                Body = CS->body_back();
+              }
+            } else
+              SkippedContainers = true;
+          }
+          const ForStmt *For = dyn_cast_or_null<ForStmt>(Body);
+          Body = For->getBody();
+          if (CGM.OpenMPSupport.getTopOpenMPPrivateVar(VD))
+            continue;
+          QualType QTy = Arr[I]->getType();
+          llvm::AllocaInst *Private =
+              CreateMemTemp(QTy, CGM.getMangledName(VD) + ".private.");
+          CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
+          llvm::BasicBlock *PrecondBB = createBasicBlock("omp.loop.precond");
+          if (isa<DeclStmt>(For->getInit()))
+            EmitAnyExprToMem(VD->getAnyInitializer(), Private,
+                             VD->getType().getQualifiers(),
+                             /*IsInitializer=*/true);
+          else
+            EmitStmt(For->getInit());
+          EmitBranchOnBoolExpr(For->getCond(), PrecondBB, PrecondEndBB, 0);
+          EmitBlock(PrecondBB);
+        }
+
+        if (IsStaticSchedule) {
+          llvm::Value *RealArgs[] = {
             Loc,
             GTid,
             Builder.getInt32(Schedule),
@@ -1432,30 +1446,30 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             PSt,
             TypeSize == 32 ? Builder.getInt32(1) : Builder.getInt64(1),
             Chunk};
-        if (TypeSize == 32 && isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_4), RealArgs);
-        else if (TypeSize == 32 && !isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_4u), RealArgs);
-        else if (TypeSize == 64 && isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_8), RealArgs);
-        else
-          EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_8u), RealArgs);
-        OMPLoopBB = createBasicBlock("omp.loop.begin");
-        EmitBlock(OMPLoopBB);
-        LB = Builder.CreateLoad(PLB);
-        Builder.CreateStore(LB, Private);
-        UB = Builder.CreateLoad(PUB);
-        llvm::Value *Cond = Builder.CreateICmp(
-            isSigned ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT, UB,
-            Builder.CreateLoad(GlobalUBStack));
-        UB = Builder.CreateSelect(Cond, UB, Builder.CreateLoad(GlobalUBStack));
-        Builder.CreateStore(UB, PUB);
-        MainBB = createBasicBlock("omp.loop.main");
-        FiniBB = createBasicBlock("omp.loop.fini");
-      } else {
-        llvm::IntegerType *SchedTy =
-            llvm::TypeBuilder<sched_type, false>::get(getLLVMContext());
-        llvm::Value *RealArgs[] = {
+          if (TypeSize == 32 && isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_4), RealArgs);
+          else if (TypeSize == 32 && !isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_4u), RealArgs);
+          else if (TypeSize == 64 && isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_8), RealArgs);
+          else
+            EmitRuntimeCall(OPENMPRTL_FUNC(for_static_init_8u), RealArgs);
+          OMPLoopBB = createBasicBlock("omp.loop.begin");
+          EmitBlock(OMPLoopBB);
+          LB = Builder.CreateLoad(PLB);
+          Builder.CreateStore(LB, Private);
+          UB = Builder.CreateLoad(PUB);
+          llvm::Value *Cond = Builder.CreateICmp(
+                isSigned ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT, UB,
+                Builder.CreateLoad(GlobalUBStack));
+          UB = Builder.CreateSelect(Cond, UB, Builder.CreateLoad(GlobalUBStack));
+          Builder.CreateStore(UB, PUB);
+          MainBB = createBasicBlock("omp.loop.main");
+          FiniBB = createBasicBlock("omp.loop.fini");
+        } else {
+          llvm::IntegerType *SchedTy =
+              llvm::TypeBuilder<sched_type, false>::get(getLLVMContext());
+          llvm::Value *RealArgs[] = {
             Loc,
             GTid,
             llvm::ConstantInt::get(SchedTy, Schedule),
@@ -1463,274 +1477,278 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
             UB,
             TypeSize == 32 ? Builder.getInt32(1) : Builder.getInt64(1),
             Chunk};
-        // __kmpc_dispatch_init{4, 8}(&loc, gtid, sched_type, lb, ub, st,
-        // chunk);
-        if (TypeSize == 32 && isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_4), RealArgs);
-        else if (TypeSize == 32 && !isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_4u), RealArgs);
-        else if (TypeSize == 64 && isSigned)
-          EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_8), RealArgs);
-        else
-          EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_8u), RealArgs);
+          // __kmpc_dispatch_init{4, 8}(&loc, gtid, sched_type, lb, ub, st,
+          // chunk);
+          if (TypeSize == 32 && isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_4), RealArgs);
+          else if (TypeSize == 32 && !isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_4u), RealArgs);
+          else if (TypeSize == 64 && isSigned)
+            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_8), RealArgs);
+          else
+            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_init_8u), RealArgs);
 
-        // a dominance issue is exposed by the control loop in nvptx
-        // solve by postponing into the loop first basic block the generation
-        // of the arguments for dispatch* functions
-        bool IsNvptxTarget =
-            CGM.getLangOpts().OpenMPTargetMode &&
-            (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
-             CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64);
-        if (IsNvptxTarget) {
-          OMPLoopBB = createBasicBlock("omp.loop.begin");
-          EmitBlock(OMPLoopBB);
-        }
-
-        llvm::Value *GTid2 = OPENMPRTL_THREADNUM(S.getLocStart(), *this);
-        llvm::Value *RealArgsNext[] = {Loc, IsNvptxTarget ? GTid2 : GTid, PLast,
-                                       PLB, PUB, PSt};
-
-        if (!IsNvptxTarget) {
-          OMPLoopBB = createBasicBlock("omp.loop.begin");
-          EmitBlock(OMPLoopBB);
-        }
-
-        llvm::Value *CallRes;
-        if (TypeSize == 32 && isSigned)
-          CallRes =
-              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_4), RealArgsNext);
-        else if (TypeSize == 32 && !isSigned)
-          CallRes =
-              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_4u), RealArgsNext);
-        else if (TypeSize == 64 && isSigned)
-          CallRes =
-              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_8), RealArgsNext);
-        else
-          CallRes =
-              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_8u), RealArgsNext);
-        llvm::BasicBlock *OMPInitBB = createBasicBlock("omp.loop.init");
-        llvm::SwitchInst *Switch = Builder.CreateSwitch(
-            Builder.CreateIntCast(CallRes, Int32Ty, false), EndBB, 1);
-        Switch->addCase(llvm::ConstantInt::get(Int32Ty, 1), OMPInitBB);
-        EmitBranch(OMPInitBB);
-        EmitBlock(OMPInitBB);
-        LB = Builder.CreateLoad(PLB);
-        UB = Builder.CreateLoad(PUB);
-        Builder.CreateStore(LB, Private);
-        MainBB = createBasicBlock("omp.loop.main");
-        FiniBB = createBasicBlock("omp.loop.fini");
-      }
-      if (HasSimd) {
-        // Update vectorizer width on the loop stack.
-        SeparateLastIter = SimdWrapper.emitSafelen(this);
-
-        if (SeparateLastIter) {
-          // Emit the following for the lastprivate vars update:
-          //   --UB;
-          // It is unclear if putting it under "if (*PLast)" will be
-          // more or less efficient, this needs to be investigated.
-          UB = Builder.CreateSub(UB, llvm::ConstantInt::get(UB->getType(), 1));
-          Builder.CreateStore(UB, PUB);
-        }
-
-        // Initialize the captured struct.
-        CapStruct = InitCapturedStruct(*SimdWrapper.getAssociatedStmt());
-      }
-
-      EmitBranch(MainBB);
-      EmitBlock(MainBB);
-
-      if (IsStaticSchedule) {
-        LB = Builder.CreateLoad(PLB);
-        GlobalUB = Builder.CreateLoad(GlobalUBStack);
-        llvm::Value *Cond = Builder.CreateICmp(
-            isSigned ? llvm::CmpInst::ICMP_SLE : llvm::CmpInst::ICMP_ULE, LB,
-            GlobalUB);
-        llvm::BasicBlock *ContBB = createBasicBlock("omp.lb.le.global_ub.");
-        Builder.CreateCondBr(Cond, ContBB, EndBB);
-        EmitBlock(ContBB);
-      }
-
-      if (HasSimd) {
-        // Push current LoopInfo onto the LoopStack.
-        LoopStack.push(MainBB);
-      }
-
-      {
-        RunCleanupsScope ThenScope(*this);
-        EmitStmt(getInitFromLoopDirective(&S));
-#ifdef DEBUG
-        // CodeGen for clauses (call start).
-        for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                             E = S.clauses().end();
-             I != E; ++I)
-          if (const OMPLastPrivateClause *Clause =
-                  dyn_cast_or_null<OMPLastPrivateClause>(*I)) {
-            for (OMPLastPrivateClause::varlist_const_iterator
-                     I1 = Clause->varlist_begin(),
-                     E1 = Clause->varlist_end();
-                 I1 != E1; ++I1) {
-              const VarDecl *VD =
-                  cast<VarDecl>(cast<DeclRefExpr>(*I1)->getDecl());
-              if (VD->getName() == "IDX")
-                CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
-              else if (VD->getName() == "UB")
-                CGM.OpenMPSupport.addOpenMPPrivateVar(VD, DebugUB);
-              else if (VD->getName() == "LUB")
-                CGM.OpenMPSupport.addOpenMPPrivateVar(VD, PUB);
-              else if (VD->getName() == "LLB")
-                CGM.OpenMPSupport.addOpenMPPrivateVar(VD, PLB);
-            }
-          }
-#endif
-        llvm::Value *Idx = Builder.CreateLoad(Private, ".idx.");
-        llvm::BasicBlock *UBLBCheckBB =
-            createBasicBlock("omp.lb_ub.check_pass");
-        UB = Builder.CreateLoad(PUB);
-        llvm::Value *UBLBCheck =
-            isSigned ? Builder.CreateICmpSLE(Idx, UB, "omp.idx.le.ub")
-                     : Builder.CreateICmpULE(Idx, UB, "omp.idx.le.ub");
-        // llvm::BasicBlock *PrevBB = Builder.GetInsertBlock();
-        Builder.CreateCondBr(UBLBCheck, UBLBCheckBB, FiniBB);
-        EmitBlock(UBLBCheckBB);
-        llvm::BasicBlock *ContBlock = createBasicBlock("omp.cont.block");
-
-        BreakContinueStack.push_back(
-            BreakContinue(getJumpDestInCurrentScope(EndBB),
-                          getJumpDestInCurrentScope(ContBlock)));
-        if (HasSimd) {
-          if (CGM.getLangOpts().OpenMPTargetMode &&
+          // a dominance issue is exposed by the control loop in nvptx
+          // solve by postponing into the loop first basic block the generation
+          // of the arguments for dispatch* functions
+          bool IsNvptxTarget =
+              CGM.getLangOpts().OpenMPTargetMode &&
               (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
-               CGM.getTarget().getTriple().getArch() ==
-                   llvm::Triple::nvptx64)) {
-            InlinedOpenMPRegion Region(*this, S.getAssociatedStmt());
-            RunCleanupsScope ExecutedScope(*this);
-            CGPragmaOmpSimd Wrapper(&S);
-            EmitPragmaSimd(Wrapper);
+               CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64);
+          if (IsNvptxTarget) {
+            OMPLoopBB = createBasicBlock("omp.loop.begin");
+            EmitBlock(OMPLoopBB);
+          }
+
+          llvm::Value *GTid2 = OPENMPRTL_THREADNUM(S.getLocStart(), *this);
+          llvm::Value *RealArgsNext[] = {Loc, IsNvptxTarget ? GTid2 : GTid, PLast,
+                                         PLB, PUB, PSt};
+
+          if (!IsNvptxTarget) {
+            OMPLoopBB = createBasicBlock("omp.loop.begin");
+            EmitBlock(OMPLoopBB);
+          }
+
+          llvm::Value *CallRes;
+          if (TypeSize == 32 && isSigned)
+            CallRes =
+                EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_4), RealArgsNext);
+          else if (TypeSize == 32 && !isSigned)
+            CallRes =
+                EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_4u), RealArgsNext);
+          else if (TypeSize == 64 && isSigned)
+            CallRes =
+                EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_8), RealArgsNext);
+          else
+            CallRes =
+                EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_next_8u), RealArgsNext);
+          llvm::BasicBlock *OMPInitBB = createBasicBlock("omp.loop.init");
+          llvm::SwitchInst *Switch = Builder.CreateSwitch(
+                Builder.CreateIntCast(CallRes, Int32Ty, false), EndBB, 1);
+          Switch->addCase(llvm::ConstantInt::get(Int32Ty, 1), OMPInitBB);
+          EmitBranch(OMPInitBB);
+          EmitBlock(OMPInitBB);
+          LB = Builder.CreateLoad(PLB);
+          UB = Builder.CreateLoad(PUB);
+          Builder.CreateStore(LB, Private);
+          MainBB = createBasicBlock("omp.loop.main");
+          FiniBB = createBasicBlock("omp.loop.fini");
+        }
+        if (HasSimd) {
+          // Update vectorizer width on the loop stack.
+          SeparateLastIter = SimdWrapper.emitSafelen(this);
+
+          if (SeparateLastIter) {
+            // Emit the following for the lastprivate vars update:
+            //   --UB;
+            // It is unclear if putting it under "if (*PLast)" will be
+            // more or less efficient, this needs to be investigated.
+            UB = Builder.CreateSub(UB, llvm::ConstantInt::get(UB->getType(), 1));
+            Builder.CreateStore(UB, PUB);
+          }
+
+          // Initialize the captured struct.
+          CapStruct = InitCapturedStruct(*SimdWrapper.getAssociatedStmt());
+        }
+
+        EmitBranch(MainBB);
+        EmitBlock(MainBB);
+
+        if (IsStaticSchedule) {
+          LB = Builder.CreateLoad(PLB);
+          GlobalUB = Builder.CreateLoad(GlobalUBStack);
+          llvm::Value *Cond = Builder.CreateICmp(
+                isSigned ? llvm::CmpInst::ICMP_SLE : llvm::CmpInst::ICMP_ULE, LB,
+                GlobalUB);
+          llvm::BasicBlock *ContBB = createBasicBlock("omp.lb.le.global_ub.");
+          Builder.CreateCondBr(Cond, ContBB, EndBB);
+          EmitBlock(ContBB);
+        }
+
+        if (HasSimd) {
+          // Push current LoopInfo onto the LoopStack.
+          LoopStack.push(MainBB);
+        }
+
+        {
+          RunCleanupsScope ThenScope(*this);
+          EmitStmt(getInitFromLoopDirective(&S));
+#ifdef DEBUG
+          // CodeGen for clauses (call start).
+          for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
+               E = S.clauses().end();
+               I != E; ++I)
+            if (const OMPLastPrivateClause *Clause =
+                dyn_cast_or_null<OMPLastPrivateClause>(*I)) {
+              for (OMPLastPrivateClause::varlist_const_iterator
+                   I1 = Clause->varlist_begin(),
+                   E1 = Clause->varlist_end();
+                   I1 != E1; ++I1) {
+                const VarDecl *VD =
+                    cast<VarDecl>(cast<DeclRefExpr>(*I1)->getDecl());
+                if (VD->getName() == "IDX")
+                  CGM.OpenMPSupport.addOpenMPPrivateVar(VD, Private);
+                else if (VD->getName() == "UB")
+                  CGM.OpenMPSupport.addOpenMPPrivateVar(VD, DebugUB);
+                else if (VD->getName() == "LUB")
+                  CGM.OpenMPSupport.addOpenMPPrivateVar(VD, PUB);
+                else if (VD->getName() == "LLB")
+                  CGM.OpenMPSupport.addOpenMPPrivateVar(VD, PLB);
+              }
+            }
+#endif
+          llvm::Value *Idx = Builder.CreateLoad(Private, ".idx.");
+          llvm::BasicBlock *UBLBCheckBB =
+              createBasicBlock("omp.lb_ub.check_pass");
+          UB = Builder.CreateLoad(PUB);
+          llvm::Value *UBLBCheck =
+              isSigned ? Builder.CreateICmpSLE(Idx, UB, "omp.idx.le.ub")
+                       : Builder.CreateICmpULE(Idx, UB, "omp.idx.le.ub");
+          // llvm::BasicBlock *PrevBB = Builder.GetInsertBlock();
+          Builder.CreateCondBr(UBLBCheck, UBLBCheckBB, FiniBB);
+          EmitBlock(UBLBCheckBB);
+          llvm::BasicBlock *ContBlock = createBasicBlock("omp.cont.block");
+
+          BreakContinueStack.push_back(
+                BreakContinue(getJumpDestInCurrentScope(EndBB),
+                              getJumpDestInCurrentScope(ContBlock)));
+          if (HasSimd) {
+            if (CGM.getLangOpts().OpenMPTargetMode &&
+                (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
+                 CGM.getTarget().getTriple().getArch() ==
+                 llvm::Triple::nvptx64)) {
+              InlinedOpenMPRegion Region(*this, S.getAssociatedStmt());
+              RunCleanupsScope ExecutedScope(*this);
+              CGPragmaOmpSimd Wrapper(&S);
+              EmitPragmaSimd(Wrapper);
+            } else {
+              RunCleanupsScope Scope(*this);
+              BodyFunction = EmitSimdFunction(SimdWrapper);
+              EmitSIMDForHelperCall(BodyFunction, CapStruct, Private, false);
+            }
           } else {
             RunCleanupsScope Scope(*this);
-            BodyFunction = EmitSimdFunction(SimdWrapper);
-            EmitSIMDForHelperCall(BodyFunction, CapStruct, Private, false);
+            if (IsInnerLoopGen || !IsComplexParallelLoop) {
+              if (SKind == OMPD_for)
+                OMPCancelMap[OMPD_for] = getJumpDestInCurrentScope(EndBB);
+              EmitStmt(Body);
+              OMPCancelMap.erase(OMPD_for);
+            } else {
+              const Expr *LowerBound = getLowerBoundFromLoopDirective(&S);
+              const Expr *UpperBound = getUpperBoundFromLoopDirective(&S);
+              EmitStoreOfScalar(Builder.CreateLoad(PLB), EmitLValue(LowerBound));
+              EmitStoreOfScalar(Builder.CreateLoad(PUB), EmitLValue(UpperBound));
+              // Special codegen for distribute parallel for [simd] constructs
+              if (Kind == OMPD_distribute_parallel_for ||
+                  Kind == OMPD_teams_distribute_parallel_for ||
+                  Kind == OMPD_target_teams_distribute_parallel_for)
+                EmitOMPDirectiveWithParallel(OMPD_parallel_for, OMPD_for, S);
+              else if (Kind == OMPD_distribute_parallel_for_simd ||
+                       Kind == OMPD_teams_distribute_parallel_for_simd ||
+                       Kind == OMPD_target_teams_distribute_parallel_for_simd)
+                EmitOMPDirectiveWithParallel(OMPD_parallel_for_simd,
+                                             OMPD_for_simd, S);
+            }
           }
-        } else {
-          RunCleanupsScope Scope(*this);
-          if (IsInnerLoopGen || !IsComplexParallelLoop) {
-            if (SKind == OMPD_for)
-              OMPCancelMap[OMPD_for] = getJumpDestInCurrentScope(EndBB);
-            EmitStmt(Body);
-            OMPCancelMap.erase(OMPD_for);
-          } else {
-            const Expr *LowerBound = getLowerBoundFromLoopDirective(&S);
-            const Expr *UpperBound = getUpperBoundFromLoopDirective(&S);
-            EmitStoreOfScalar(Builder.CreateLoad(PLB), EmitLValue(LowerBound));
-            EmitStoreOfScalar(Builder.CreateLoad(PUB), EmitLValue(UpperBound));
-            // Special codegen for distribute parallel for [simd] constructs
-            if (Kind == OMPD_distribute_parallel_for ||
-                Kind == OMPD_teams_distribute_parallel_for ||
-                Kind == OMPD_target_teams_distribute_parallel_for)
-              EmitOMPDirectiveWithParallel(OMPD_parallel_for, OMPD_for, S);
-            else if (Kind == OMPD_distribute_parallel_for_simd ||
-                     Kind == OMPD_teams_distribute_parallel_for_simd ||
-                     Kind == OMPD_target_teams_distribute_parallel_for_simd)
-              EmitOMPDirectiveWithParallel(OMPD_parallel_for_simd,
-                                           OMPD_for_simd, S);
+          BreakContinueStack.pop_back();
+          EnsureInsertPoint();
+          EmitBranch(ContBlock);
+          EmitBlock(ContBlock);
+          Idx = Builder.CreateLoad(Private, ".idx.");
+
+          llvm::Value *NextIdx;
+          NextIdx = CGM.getOpenMPRuntime().GetNextIdIncrement(
+                *this, IsStaticSchedule, ChunkSize, Chunk, IdxTy, QTy, Idx, Kind,
+                SKind, PSt);
+          Builder.CreateStore(NextIdx, Private);
+          if (!IsStaticSchedule && CGM.OpenMPSupport.getOrdered()) {
+            // Emit _dispatch_fini for ordered loops
+            llvm::Value *RealArgsFini[] = {Loc, GTid};
+            if (TypeSize == 32 && isSigned)
+              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_4), RealArgsFini);
+            else if (TypeSize == 32 && !isSigned)
+              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_4u), RealArgsFini);
+            else if (TypeSize == 64 && isSigned)
+              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_8), RealArgsFini);
+            else
+              EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_8u), RealArgsFini);
           }
+          //      for(llvm::SmallVector<const Expr *, 16>::const_iterator II =
+          // Incs.begin(),
+          //                                                              EE =
+          // Incs.end();
+          //          II != EE; ++II) {
+          //        EmitIgnoredExpr(*II);
+          //        EnsureInsertPoint();
+          //      }
+          EmitBranch(MainBB);
+          if (HasSimd) {
+            LoopStack.pop();
+          }
+          EmitBlock(FiniBB);
+          if (IsStaticSchedule && ChunkSize != 0) {
+            llvm::Value *St = Builder.CreateLoad(PSt);
+            LB = Builder.CreateLoad(PLB);
+            LB = Builder.CreateAdd(LB, St);
+            Builder.CreateStore(LB, PLB);
+            UB = Builder.CreateLoad(PUB);
+            UB = Builder.CreateAdd(UB, St);
+            Builder.CreateStore(UB, PUB);
+          }
+          if (SeparateLastIter) {
+            // Emit the following for the lastprivate vars update:
+            //   call __simd_helper(cs, idx, 1)
+            //
+            EmitSIMDForHelperCall(BodyFunction, CapStruct, Private, true);
+          }
+          EmitBranch(!IsStaticSchedule || ChunkSize != 0 ? OMPLoopBB : EndBB);
+          // EmitStmt(getInitFromLoopDirective(&S));
+          // EnsureInsertPoint();
+          // UBLBCheck = isSigned ?
+          //                     Builder.CreateICmpSLE(NextIdx, UB,
+          // "omp.idx.le.ub")
+          // :
+          //                     Builder.CreateICmpULE(NextIdx, UB,
+          // "omp.idx.le.ub");
+          // PrevBB = Builder.GetInsertBlock();
+          // Builder.CreateCondBr(UBLBCheck, UBLBCheckBB, OMPLoopBB);
         }
-        BreakContinueStack.pop_back();
-        EnsureInsertPoint();
-        EmitBranch(ContBlock);
-        EmitBlock(ContBlock);
-        Idx = Builder.CreateLoad(Private, ".idx.");
+        EmitBlock(EndBB, true);
+        if (IsStaticSchedule) {
+          llvm::Value *GTidReload =
+              OPENMPRTL_THREADNUM(S.getLocStart(), *this);
 
-        llvm::Value *NextIdx;
-        NextIdx = CGM.getOpenMPRuntime().GetNextIdIncrement(
-            *this, IsStaticSchedule, ChunkSize, Chunk, IdxTy, QTy, Idx, Kind,
-            SKind, PSt);
-        Builder.CreateStore(NextIdx, Private);
-        if (!IsStaticSchedule && CGM.OpenMPSupport.getOrdered()) {
-          // Emit _dispatch_fini for ordered loops
-          llvm::Value *RealArgsFini[] = {Loc, GTid};
-          if (TypeSize == 32 && isSigned)
-            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_4), RealArgsFini);
-          else if (TypeSize == 32 && !isSigned)
-            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_4u), RealArgsFini);
-          else if (TypeSize == 64 && isSigned)
-            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_8), RealArgsFini);
-          else
-            EmitRuntimeCall(OPENMPRTL_FUNC(dispatch_fini_8u), RealArgsFini);
+          llvm::Value *RealArgsFini[] = { Loc, GTidReload };
+          EmitRuntimeCall(OPENMPRTL_FUNC(for_static_fini), RealArgsFini);
         }
-        //      for(llvm::SmallVector<const Expr *, 16>::const_iterator II =
-        // Incs.begin(),
-        //                                                              EE =
-        // Incs.end();
-        //          II != EE; ++II) {
-        //        EmitIgnoredExpr(*II);
-        //        EnsureInsertPoint();
-        //      }
-        EmitBranch(MainBB);
-        if (HasSimd) {
-          LoopStack.pop();
-        }
-        EmitBlock(FiniBB);
-        if (IsStaticSchedule && ChunkSize != 0) {
-          llvm::Value *St = Builder.CreateLoad(PSt);
-          LB = Builder.CreateLoad(PLB);
-          LB = Builder.CreateAdd(LB, St);
-          Builder.CreateStore(LB, PLB);
-          UB = Builder.CreateLoad(PUB);
-          UB = Builder.CreateAdd(UB, St);
-          Builder.CreateStore(UB, PUB);
-        }
-        if (SeparateLastIter) {
-          // Emit the following for the lastprivate vars update:
-          //   call __simd_helper(cs, idx, 1)
-          //
-          EmitSIMDForHelperCall(BodyFunction, CapStruct, Private, true);
-        }
-        EmitBranch(!IsStaticSchedule || ChunkSize != 0 ? OMPLoopBB : EndBB);
-        // EmitStmt(getInitFromLoopDirective(&S));
-        // EnsureInsertPoint();
-        // UBLBCheck = isSigned ?
-        //                     Builder.CreateICmpSLE(NextIdx, UB,
-        // "omp.idx.le.ub")
-        // :
-        //                     Builder.CreateICmpULE(NextIdx, UB,
-        // "omp.idx.le.ub");
-        // PrevBB = Builder.GetInsertBlock();
-        // Builder.CreateCondBr(UBLBCheck, UBLBCheckBB, OMPLoopBB);
-      }
-      EmitBlock(EndBB, true);
-      if (IsStaticSchedule) {
-    	  llvm::Value *GTidReload =
-    	        OPENMPRTL_THREADNUM(S.getLocStart(), *this);
+        CGM.OpenMPSupport.setLastIterVar(PLast);
 
-    	  llvm::Value *RealArgsFini[] = { Loc, GTidReload };
-        EmitRuntimeCall(OPENMPRTL_FUNC(for_static_fini), RealArgsFini);
+
+        if (!IsDistributeLoop &&
+            (CGM.OpenMPSupport.hasLastPrivate() || !CGM.OpenMPSupport.getNoWait()))
+          EmitOMPCancelBarrier(S.getLocEnd(), KMP_IDENT_BARRIER_IMPL_FOR);
+        // CodeGen for clauses (call end).
+        for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
+             E = S.clauses().end();
+             I != E; ++I)
+          if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
+            EmitPostOMPClause(*(*I), S);
+
       }
-      CGM.OpenMPSupport.setLastIterVar(PLast);
     }
-
-    if (!IsDistributeLoop &&
-        (CGM.OpenMPSupport.hasLastPrivate() || !CGM.OpenMPSupport.getNoWait()))
-      EmitOMPCancelBarrier(S.getLocEnd(), KMP_IDENT_BARRIER_IMPL_FOR);
-    // CodeGen for clauses (call end).
-    for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                         E = S.clauses().end();
-         I != E; ++I)
-      if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
-        EmitPostOMPClause(*(*I), S);
   }
 
   // CodeGen for clauses (closing steps).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                       E = S.clauses().end();
+       E = S.clauses().end();
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitCloseOMPClause(*(*I), S);
 
+
   // CodeGen for clauses (task finalize).
   for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
-                                       E = S.clauses().end();
+       E = S.clauses().end();
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(SKind, (*I)->getClauseKind()))
       EmitFinalOMPClause(*(*I), S);
@@ -1793,8 +1811,8 @@ void CodeGenFunction::EmitOMPDirectiveWithTeamsNoMicrotask(
     CGM.getOpenMPRuntime().StartTeamsRegion();
 
   // CodeGen for clauses (task init).
-  for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(), 
-                                       E = S.clauses().end(); 
+  for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(),
+                                       E = S.clauses().end();
        I != E; ++I)
     if (*I && isAllowedClauseForDirective(OMPD_teams,(*I)->getClauseKind()))
       EmitInitOMPClause(*(*I), S);
@@ -2289,6 +2307,14 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     if (isTargetMode)
       CGM.getOpenMPRuntime().StartNewTargetRegion();
 
+    // Codegen target clauses init, this currently include
+    // - device clause
+    // - map clause
+    for (ArrayRef<OMPClause *>::iterator I = S.clauses().begin(), E =
+        S.clauses().end(); I != E; ++I)
+      if (*I && isAllowedClauseForDirective(OMPD_target,(*I)->getClauseKind()))
+        EmitInitOMPClause(*(*I), S);
+
     // Create the target function
     std::string TargetRegionName;
 
@@ -2421,6 +2447,12 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         break;
       }
 
+      bool isSparkTarget = isTargetMode &&
+          CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+      if(isSparkTarget) {
+        EmitSparkJob();
+      }
+
       if (isTargetMode)
         // at the end of the target region, set next label as the finishing case
         // note that we need to understand if we are in a sequential or parallel
@@ -2460,6 +2492,8 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     llvm::SmallVector<llvm::Value*, 8> RealArgPointerValues;
     llvm::SmallVector<llvm::Value*, 8> RealArgSizeValues;
     llvm::SmallVector<unsigned, 8> RealArgTypeValues;
+    llvm::SmallVector<unsigned, 8> RealArgIdentifierValues;
+
 
 
     llvm::SmallVector<llvm::Value*, 8> HostArgs;
@@ -2473,10 +2507,11 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
       ArrayRef<llvm::Value*> MapClausePointersArray;
       ArrayRef<llvm::Value*> MapClauseSizesArray;
       ArrayRef<unsigned> MapClauseTypesArray;
+      ArrayRef<unsigned> MapClauseIdentifiersArray;
 
       CGM.OpenMPSupport.getOffloadingMapArrays(MapClauseDecls,
           MapClauseBasePointersArray, MapClausePointersArray, MapClauseSizesArray,
-          MapClauseTypesArray);
+          MapClauseTypesArray, MapClauseIdentifiersArray);
 
       // Scan the captured declarations
       unsigned EFidx = 0;
@@ -2529,6 +2564,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
             RealArgPointerValues.push_back(MapClausePointersArray[i]);
             RealArgSizeValues.push_back(MapClauseSizesArray[i]);
             RealArgTypeValues.push_back(MapClauseTypesArray[i]);
+            RealArgIdentifierValues.push_back(MapClauseIdentifiersArray[i]);
 
             dealtWithByMapClause = true;
             break;
@@ -2547,6 +2583,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         RealArgPointerValues.push_back(Arg);
         RealArgSizeValues.push_back(Builder.getInt64(VS));
         RealArgTypeValues.push_back( DefaultType);
+        RealArgIdentifierValues.push_back(CGM.OpenMPSupport.getOffloadingMapCurrentIdentifier());
 
         // If this is a lambda structure with pointer fields, translate
         // the host pointer and replace the field with the device address.
@@ -2578,6 +2615,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
                 RealArgSizeValues.push_back(Builder.getInt64(VS));
                 RealArgTypeValues.push_back( OMP_TGT_MAPTYPE_POINTER |
                     OMP_TGT_MAPTYPE_EXTRA );
+                RealArgIdentifierValues.push_back(CGM.OpenMPSupport.getOffloadingMapCurrentIdentifier());
               }
             }
           }
@@ -2623,6 +2661,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     llvm::Value *FinalArgPointers = 0;
     llvm::Value *FinalArgSizes = 0;
     llvm::Value *FinalArgTypes = 0;
+    llvm::Value *FinalArgIdentifiers = 0;
 
     if (!RealArgBasePointerValues.empty()) {
 
@@ -2679,11 +2718,23 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
       FinalArgTypes = Builder.CreateConstInBoundsGEP2_32(
           FinalArgTypesInit->getType(),FinalArgTypesTmp, 0,0);
 
+      // For the identifiers, we don't need to allocate everything, we just create a
+      // constant array
+      llvm::Constant *FinalArgIdentifiersInit = llvm::ConstantDataArray::get(
+          Builder.getContext(), RealArgIdentifierValues);
+      llvm::GlobalVariable *FinalArgIdentifiersTmp = new llvm::GlobalVariable(
+          CGM.getModule(), FinalArgIdentifiersInit->getType(), true,
+          llvm::GlobalValue::PrivateLinkage, FinalArgIdentifiersInit, ".tgt_ids");
+
+      FinalArgIdentifiers = Builder.CreateConstInBoundsGEP2_32(
+          FinalArgIdentifiersInit->getType(),FinalArgIdentifiersTmp, 0,0);
+
     } else {
       FinalArgBasePointers = llvm::Constant::getNullValue(CGM.VoidPtrPtrTy);
       FinalArgPointers = llvm::Constant::getNullValue(CGM.VoidPtrPtrTy);
       FinalArgSizes = llvm::Constant::getNullValue(CGM.Int64Ty->getPointerTo());
       FinalArgTypes = llvm::Constant::getNullValue(CGM.Int32Ty->getPointerTo());
+      FinalArgIdentifiers = llvm::Constant::getNullValue(CGM.Int32Ty->getPointerTo());
     }
 
     // Obtain region arguments' references and fill the arguments ptr and size array
@@ -2704,6 +2755,7 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     TgtArgs.push_back(FinalArgPointers);
     TgtArgs.push_back(FinalArgSizes);
     TgtArgs.push_back(FinalArgTypes);
+    TgtArgs.push_back(FinalArgIdentifiers);
 
     llvm::Value *TgtTargetFn = 0;
 
@@ -3902,21 +3954,10 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
       BaseAddrs.size() == Vars.size() && BaseAddrs.size() == Addrs.size()
           && BaseAddrs.size() == Sizes.size() && "Vars addresses mismatch!");
 
+  bool isTargetMode = CGM.getLangOpts().OpenMPTargetMode;
+
   for (unsigned i = 0; i < BaseAddrs.size(); ++i) {
     const Expr * Var = Vars[i];
-    llvm::Value * VB = EmitAnyExprToTemp(BaseAddrs[i]).getScalarVal();
-    llvm::Value * VP = EmitAnyExprToTemp(Addrs[i]).getScalarVal();
-    llvm::Value * VS = EmitAnyExprToTemp(Sizes[i]).getScalarVal();
-
-    // Subtract the two pointers to obtain the size or
-    // use the value directly if it is a constant
-
-    if (!isa<llvm::ConstantInt>(VS)) {
-      llvm::Value *RBI = Builder.CreatePtrToInt(VP, CGM.Int64Ty);
-      llvm::Value *REI = Builder.CreatePtrToInt(VS, CGM.Int64Ty);
-      VS = Builder.CreateSub(REI, RBI);
-    }
-
 
     //Save the declaration associated with a map so it can be related with the
     //parameters of a target region later on. As in the OpenMP spec, here we
@@ -3941,7 +3982,28 @@ void CodeGenFunction::AppendOpenMPStackWithMapInfo(const OMPClause &C){
       }
     }
 
+    const ValueDecl *VD = VarDecl->getDecl();
+
     assert(VarDecl && "Unexpected expression in the map clause");
+
+    // Do not emit specific code for targets
+    if(isTargetMode) {
+      CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
+      continue;
+    }
+
+    llvm::Value * VB = EmitAnyExprToTemp(BaseAddrs[i]).getScalarVal();
+    llvm::Value * VP = EmitAnyExprToTemp(Addrs[i]).getScalarVal();
+    llvm::Value * VS = EmitAnyExprToTemp(Sizes[i]).getScalarVal();
+
+    // Subtract the two pointers to obtain the size or
+    // use the value directly if it is a constant
+
+    if (!isa<llvm::ConstantInt>(VS)) {
+      llvm::Value *RBI = Builder.CreatePtrToInt(VP, CGM.Int64Ty);
+      llvm::Value *REI = Builder.CreatePtrToInt(VS, CGM.Int64Ty);
+      VS = Builder.CreateSub(REI, RBI);
+    }
 
     //     - If it is a pointer with a range and this pointer was not mapped in previous clauses:
     //       Add one entry for the pointer and one (extra) entry for the range
@@ -4000,10 +4062,11 @@ void CodeGenFunction::EmitAfterOMPMapClause(const OMPMapClause &C,
   ArrayRef<llvm::Value*> MapClausePointersArray;
   ArrayRef<llvm::Value*> MapClauseSizesArray;
   ArrayRef<unsigned> MapClauseTypesArray;
+  ArrayRef<unsigned> MapClauseIdentifiersArray;
 
   CGM.OpenMPSupport.getOffloadingMapArrays(MapClauseDecls,
       MapClauseBasePointersArray, MapClausePointersArray, MapClauseSizesArray,
-      MapClauseTypesArray);
+      MapClauseTypesArray, MapClauseIdentifiersArray);
 
   assert(
       MapClauseBasePointersArray.size() == MapClauseDecls.size()
@@ -4035,6 +4098,16 @@ void CodeGenFunction::EmitAfterOMPMapClause(const OMPMapClause &C,
   llvm::Value *MapClauseTypes = Builder.CreateConstInBoundsGEP2_32(
       MapClauseTypesInit->getType(),
       MapClauseTypesTmp, 0, 0);
+
+  llvm::Constant *MapClauseIdentifiersInit = llvm::ConstantDataArray::get(
+      Builder.getContext(), MapClauseIdentifiersArray);
+  llvm::GlobalVariable *MapClauseIdentifiersTmp = new llvm::GlobalVariable(
+      CGM.getModule(), MapClauseIdentifiersInit->getType(), true,
+      llvm::GlobalValue::PrivateLinkage, MapClauseIdentifiersInit, ".mapped_ids");
+
+  llvm::Value *MapClauseIdentifiers = Builder.CreateConstInBoundsGEP2_32(
+      MapClauseIdentifiersInit->getType(),
+      MapClauseIdentifiersTmp, 0, 0);
 
   for (unsigned i = 0; i < MapClauseBasePointersArray.size(); ++i) {
 
@@ -4089,6 +4162,7 @@ void CodeGenFunction::EmitAfterOMPMapClause(const OMPMapClause &C,
                            MapClausePointers,
                            MapClauseSizes,
                            MapClauseTypes,
+                           MapClauseIdentifiers,
                            llvm::ConstantInt::get(Int32Ty, ArraySize),
                            DependenceAddresses,
                            llvm::ConstantInt::get(Int32Ty, 0),
@@ -4100,7 +4174,8 @@ void CodeGenFunction::EmitAfterOMPMapClause(const OMPMapClause &C,
                            MapClauseBasePointers,
                            MapClausePointers,
                            MapClauseSizes,
-                           MapClauseTypes};
+                           MapClauseTypes,
+                           MapClauseIdentifiers};
     CGM.OpenMPSupport.setOffloadingMapArguments(makeArrayRef(Args));
   }
 
@@ -5016,6 +5091,28 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
                                             const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  for (OMPReductionClause::varlist_const_iterator I = C.varlist_begin(),
+                                                  E = C.varlist_end();
+       I != E; ++I) {
+    // Get element type.
+    const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
+    QualType QTy = (*I)->getType();
+    // if (!QTy->isScalarType())
+    //  llvm_unreachable("Reduction variables with aggregate"
+    //                   "types are not supported yet!");
+    llvm::Type *PtrType = ConvertType(getContext().getPointerType(QTy));
+    CGM.OpenMPSupport.registerReductionVar(VD, PtrType);
+  }
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    GenerateReductionKernel(C, S);
+    return;
+  }
+
   // Type1 tmp1(var1);
   // anon.field1 = &tmp1;
   // Type2 tmp2(var2);
@@ -5040,9 +5137,9 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
     std::string reductionOpName;
     if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx
        || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)
- 	  reductionOpName = "omp_reduction_op";
+          reductionOpName = "omp_reduction_op";
     else
- 	  reductionOpName = ".omp_reduction_op.";
+          reductionOpName = ".omp_reduction_op.";
 
     llvm::Function *Fn =
         llvm::Function::Create(FTy, llvm::GlobalValue::InternalLinkage,
@@ -5053,19 +5150,6 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
                       SourceLocation());
     ReductionFunc = CGF.CurFn;
   }
-
-  for (OMPReductionClause::varlist_const_iterator I = C.varlist_begin(),
-                                                  E = C.varlist_end();
-       I != E; ++I) {
-    // Get element type.
-    const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
-    QualType QTy = (*I)->getType();
-    // if (!QTy->isScalarType())
-    //  llvm_unreachable("Reduction variables with aggregate"
-    //                   "types are not supported yet!");
-    llvm::Type *PtrType = ConvertType(getContext().getPointerType(QTy));
-    CGM.OpenMPSupport.registerReductionVar(VD, PtrType);
-  }
 }
 
 void
@@ -5073,6 +5157,14 @@ CodeGenFunction::EmitPreOMPReductionClause(const OMPReductionClause &C,
                                            const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    return;
+  }
+
   // Type1 tmp1(var1);
   // anon.field1 = &tmp1;
   // Type2 tmp2(var2);
@@ -5359,6 +5451,14 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
   llvm::BasicBlock *RedBB2;
   llvm::Instruction *IP1;
   llvm::Instruction *IP2;
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    return;
+  }
+
   if (!Switch) {
     // for gpu, the synchronized reduction is inserted here
     if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx ||
@@ -5752,7 +5852,7 @@ void CodeGenFunction::EmitOMPAtomicDirective(const OMPAtomicDirective &S) {
       QualType AQTy = OPENMPRTL_ATOMICTYPE(*this, QTy);
       llvm::Value *AtomicFunc =
           AQTy.isNull() ? 0 : OPENMPRTL_ATOMIC_FUNC_GENERAL(
-                                  AQTy, AQTy, CGOpenMPRuntime::OMP_Atomic_rd, 
+                                  AQTy, AQTy, CGOpenMPRuntime::OMP_Atomic_rd,
                                   false, false);
       if (X.isSimple() && AtomicFunc) {
         llvm::Type *ATy = ConvertTypeForMem(AQTy);
@@ -5785,7 +5885,7 @@ void CodeGenFunction::EmitOMPAtomicDirective(const OMPAtomicDirective &S) {
       QualType QTyIn = S.getExpr()->getType();
       llvm::Value *AtomicFunc =
           AQTy.isNull() ? 0 : OPENMPRTL_ATOMIC_FUNC_GENERAL(
-                                  AQTy, AQTy, CGOpenMPRuntime::OMP_Atomic_wr, 
+                                  AQTy, AQTy, CGOpenMPRuntime::OMP_Atomic_wr,
                                   false, false);
       if (X.isSimple() && AtomicFunc && QTyIn->isScalarType() &&
           !QTyIn->isAnyComplexType()) {
@@ -6183,9 +6283,9 @@ void CodeGenFunction::EmitOMPCriticalDirective(const OMPCriticalDirective &S) {
   std::string name;
   if (CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx
      || CGM.getTarget().getTriple().getArch() == llvm::Triple::nvptx64)
-	    name = "_gomp_critical_user_" + directive_name + "_var";
+            name = "_gomp_critical_user_" + directive_name + "_var";
   else
-	    name = ".gomp_critical_user_" + directive_name + ".var";
+            name = ".gomp_critical_user_" + directive_name + ".var";
   llvm::Type *LckTy = llvm::TypeBuilder<kmp_critical_name, false>::get(
       CGM.getLLVMContext());
   llvm::GlobalVariable *Lck = cast<llvm::GlobalVariable>(
@@ -6242,6 +6342,14 @@ CodeGenFunction::EmitCloseOMPReductionClause(const OMPReductionClause &C,
                                              const OMPExecutableDirective &S) {
   (void)S;
   assert(!isa<OMPSimdDirective>(S)); // Not yet supported
+
+  bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
+      CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+  if(isSparkTarget) {
+    // for spark, we do not need to run the reduction
+    return;
+  }
+
   llvm::BasicBlock *RedBB1;
   llvm::BasicBlock *RedBB2;
   llvm::Instruction *IP1;
@@ -7289,10 +7397,11 @@ void CodeGenFunction::EmitOMPTargetUpdateDirective(
   ArrayRef<llvm::Value*> MapClausePointersArray;
   ArrayRef<llvm::Value*> MapClauseSizesArray;
   ArrayRef<unsigned> MapClauseTypesArray;
+  ArrayRef<unsigned> MapClauseIdentifiersArray;
 
   CGM.OpenMPSupport.getOffloadingMapArrays(MapClauseDecls,
       MapClauseBasePointersArray, MapClausePointersArray, MapClauseSizesArray,
-      MapClauseTypesArray);
+      MapClauseTypesArray, MapClauseIdentifiersArray);
 
   // for pointers we use the pointee address as base address and the pointee
   // start section as buffer address
@@ -7303,6 +7412,7 @@ void CodeGenFunction::EmitOMPTargetUpdateDirective(
           && MapClauseBasePointersArray.size() == MapClausePointersArray.size()
           && MapClauseBasePointersArray.size() == MapClauseSizesArray.size()
           && MapClauseBasePointersArray.size() == MapClauseTypesArray.size()
+          && MapClauseBasePointersArray.size() == MapClauseIdentifiersArray.size()
           && "Array size mismatch!");
 
   if (MapClauseBasePointersArray.empty())
