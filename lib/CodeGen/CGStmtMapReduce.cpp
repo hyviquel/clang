@@ -549,15 +549,6 @@ struct FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
       if(verbose) llvm::errs() << "\n";
 
-
-
-      /*FIXME: experiment without input reordering*/
-      /*
-      if(CurrArrayExpr != nullptr && CurrArrayIndexExpr->IgnoreCasts()->isRValue() && MapType == OMP_TGT_MAPTYPE_FROM) {
-        if(verbose) llvm::errs() << "Require reordering\n";
-        CGM.OpenMPSupport.getReorderMap()[RefExpr] = CurrArrayIndexExpr->IgnoreCasts();
-      }*/
-
     }
 
     return true;
@@ -928,7 +919,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
 
   // Create the mapping function
-  llvm::Module *mod = &(CGM.getModule());
 
   // Initialize a new CodeGenFunction used to generate the mapping
   CodeGenFunction CGF(CGM, true);
@@ -941,11 +931,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   Finder.TraverseStmt(LoopStmt);
 
   // Get JNI type
-  llvm::StructType *StructTy_JNINativeInterface = mod->getTypeByName("struct.JNINativeInterface_");
+  llvm::StructType *StructTy_JNINativeInterface = CGM.getModule().getTypeByName("struct.JNINativeInterface_");
   llvm::PointerType* PointerTy_JNINativeInterface = llvm::PointerType::get(StructTy_JNINativeInterface, 0);
   llvm::PointerType* PointerTy_1 = llvm::PointerType::get(PointerTy_JNINativeInterface, 0);
 
-  llvm::StructType *StructTy_jobject = mod->getTypeByName("struct._jobject");
+  llvm::StructType *StructTy_jobject = CGM.getModule().getTypeByName("struct._jobject");
   llvm::PointerType* PointerTy_jobject = llvm::PointerType::get(StructTy_jobject, 0);
 
   llvm::IntegerType *IntTy_jlong = CGF.Builder.getInt64Ty();
@@ -1012,8 +1002,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   // Generate useful type and constant
   llvm::PointerType* PointerTy_Int8 = llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
 
-  llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
-  llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(mod->getContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
+  llvm::ConstantInt* const_int32_0 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
+  llvm::ConstantInt* const_int32_2 = llvm::ConstantInt::get(getLLVMContext(), llvm::APInt(32, llvm::StringRef("2"), 10));
 
   llvm::ConstantPointerNull* const_ptr_null = llvm::ConstantPointerNull::get(PointerTy_Int8);
 
@@ -1512,4 +1502,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     exit(1);
   }
 }
+
+
+
 
