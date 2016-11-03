@@ -1,0 +1,14 @@
+# circle.yml
+machine:
+  environment:
+    LLVM_SRC: "$HOME/llvm-src"
+
+dependencies:
+  pre:
+    - git clone --depth 1 git://github.com/ompcloud/llvm.git $LLVM_SRC
+
+test:
+  pre:
+      - cmake -DCLANG_PATH_TO_LLVM_SOURCE=$LLVM_SRC .
+  post:
+    - make clang-test
