@@ -1,7 +1,8 @@
 # circle.yml
 machine:
   environment:
-    LLVM_SRC: "$HOME/llvm-src"
+    LLVM_SRC: "$HOME/llvm"
+    CLANG_SRC: "$HOME/clang"
 
 dependencies:
   pre:
@@ -9,6 +10,6 @@ dependencies:
 
 test:
   pre:
-    - cmake -DCLANG_PATH_TO_LLVM_SOURCE=$LLVM_SRC .
+    - cmake -DCLANG_PATH_TO_LLVM_SOURCE=$LLVM_SRC $CLANG_SRC
   post:
     - make clang-test
