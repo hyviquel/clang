@@ -9,6 +9,6 @@ dependencies:
 
 test:
   pre:
-      - cmake -DCLANG_PATH_TO_LLVM_SOURCE=$LLVM_SRC .
+    - cmake -DCLANG_PATH_TO_LLVM_SOURCE=$LLVM_SRC .
   post:
     - make clang-test
