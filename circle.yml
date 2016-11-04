@@ -12,7 +12,7 @@ test:
   pre:
     - cp -R $CLANG_SRC $LLVM_SRC/tools/
     - cmake $LLVM_SRC
-  overhead:
+  override:
     - make
 #  post:
 #    - make clang-test
