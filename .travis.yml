@@ -3,7 +3,7 @@ services:
 
 before_install:
 - docker pull ompcloud/ompcloud-test:latest
-- docker run -t --name ompcloud-test ompcloud/ompcloud-test:latest /sbin/my_init
+- docker run -d -t --name ompcloud-test ompcloud/ompcloud-test:latest /sbin/my_init
 
 script:
 - docker exec -t ompcloud-dev /opt/ompcloud-script/ompcloud-updatetools.sh
