@@ -6,7 +6,7 @@ before_install:
 - docker run -d -t --name ompcloud-test ompcloud/ompcloud-test:latest /sbin/my_init
 
 script:
-- docker exec -t ompcloud-dev /opt/ompcloud-script/ompcloud-updatetools.sh
+- docker exec -t ompcloud-test /opt/ompcloud-script/ompcloud-updatetools.sh
 
 after_script:
-- docker exec -t ompcloud-dev /opt/ompcloud-script/ompcloud-quicktests.sh -q
+- docker exec -t ompcloud-test /opt/ompcloud-script/ompcloud-quicktests.sh -q
