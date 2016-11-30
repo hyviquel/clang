@@ -225,7 +225,7 @@ std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
     const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl());
     int id = IndexMap[VD];
     SparkExpr += "ByteBuffer.wrap(";
-    SparkExpr += VD->getName();
+    SparkExpr += getSparkVarName(VD);
     // FIXME: How about long ?
     SparkExpr += ").order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt";
   } else {
@@ -235,6 +235,10 @@ std::string CodeGenFunction::getSparkExprOf(const Expr *ExprValue) {
   }
 
   return SparkExpr;
+}
+
+std::string CodeGenFunction::getSparkVarName(const ValueDecl *VD) {
+  return "__ompcloud_offload_" + VD->getName().str();
 }
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
@@ -260,7 +264,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     if(OffloadType == OMP_TGT_MAPTYPE_TO
        || OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
 
-      SPARK_FILE << "    var " << VD->getName() << " = ";
+      SPARK_FILE << "    var " << getSparkVarName(VD) << " = ";
       if(VD->getType()->isAnyPointerType())
         SPARK_FILE << "info.sc.broadcast(";
       SPARK_FILE << "fs.read(" << OffloadId << ", " << SizeInByte << ")";
@@ -269,14 +273,14 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "\n";
 
     } else if (OffloadType == OMP_TGT_MAPTYPE_FROM) {
-      SPARK_FILE << "    var " << VD->getName() << " = ";
+      SPARK_FILE << "    var " << getSparkVarName(VD) << " = ";
       if(VD->getType()->isAnyPointerType())
         SPARK_FILE << "info.sc.broadcast(";
       SPARK_FILE << "new Array[Byte](0)";
       if(VD->getType()->isAnyPointerType())
         SPARK_FILE << ")";
       SPARK_FILE << "\n";
-      SPARK_FILE << "    val sizeOf_" << VD->getName() << " = at.get(" << OffloadId << ")\n";
+      SPARK_FILE << "    val sizeOf_" << getSparkVarName(VD) << " = at.get(" << OffloadId << ")\n";
 
     }
 
@@ -350,7 +354,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
     const VarDecl *VD = it->first;
     // Separator
     SPARK_FILE << ", ";
-    SPARK_FILE << VD->getName();
+    SPARK_FILE << getSparkVarName(VD);
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ".value";
   }
@@ -359,7 +363,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
     const VarDecl *VD = it->first;
     // Separator
     SPARK_FILE << ", ";
-    SPARK_FILE << VD->getName();
+    SPARK_FILE << getSparkVarName(VD);
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << ".value";
   }
@@ -367,7 +371,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
   {
     const VarDecl *VD = it->first;
     int id = IndexMap[VD];
-    SPARK_FILE << ", sizeOf_" << VD->getName();
+    SPARK_FILE << ", sizeOf_" << getSparkVarName(VD);
   }
 
   SPARK_FILE << ") }\n";
@@ -382,7 +386,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
   {
     const VarDecl *VD = it->first;
 
-    SPARK_FILE << "    " << VD->getName() << " = ";
+    SPARK_FILE << "    " << getSparkVarName(VD) << " = ";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << "info.sc.broadcast(";
     if(NbOutputs == 1) {
@@ -412,7 +416,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
   {
     const VarDecl *VD = it->first;
 
-    SPARK_FILE << "    " << VD->getName() << " = ";
+    SPARK_FILE << "    " << getSparkVarName(VD) << " = ";
     if(VD->getType()->isAnyPointerType())
       SPARK_FILE << "info.sc.broadcast(";
     if(NbOutputs == 1) {
@@ -428,7 +432,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGen
       SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
     }
     if(CGM.OpenMPSupport.isReduced(VD))
-      SPARK_FILE << ".reduce{(x, y) => new OmpKernel().reduceMethod"<< VD->getName() << "(x, y)}";
+      SPARK_FILE << ".reduce{(x, y) => new OmpKernel().reduceMethod"<< getSparkVarName(VD) << "(x, y)}";
     else
       SPARK_FILE << ".reduce{(x, y) => Util.bitor(x, y)}";
     if(VD->getType()->isAnyPointerType())
@@ -454,7 +458,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     if (OffloadType == OMP_TGT_MAPTYPE_FROM
         || OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-      SPARK_FILE << "    fs.write(" << OffloadId << ", " << VD->getName();
+      SPARK_FILE << "    fs.write(" << OffloadId << ", " << getSparkVarName(VD);
       if(it->first->getType()->isAnyPointerType())
         SPARK_FILE << ".value";
       SPARK_FILE << ")\n";
