@@ -1080,6 +1080,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     if(!varType->isAnyPointerType()) {
 
       // GetByteArrayElements
+      // FIXME: Should use GetByteArrayRegion to force copy
       std::vector<llvm::Value*> ptr_load_arg_params;
       ptr_load_arg_params.push_back(ptr_env);
       ptr_load_arg_params.push_back(args);
@@ -1360,7 +1361,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   for (auto inOutBarrays = VecInOutBarrays.begin(); inOutBarrays != VecInOutBarrays.end(); ++inOutBarrays)
   {
-    // ReleaseByteArrayElements
+    // ReleaseCritical
     std::vector<llvm::Value*> void_272_params;
     void_272_params.push_back(ptr_env);
     void_272_params.push_back(*inOutBarrays);
