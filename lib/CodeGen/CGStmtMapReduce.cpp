@@ -1292,6 +1292,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
 
   {
+    CGM.OpenMPSupport.startSparkRegion();
     // Create a separate cleanup scope for the body, in case it is not
     // a compound statement.
     RunCleanupsScope BodyScope(CGF);
@@ -1301,6 +1302,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       CGF.EmitCompoundStmtWithoutScope(*S);
     else
       CGF.EmitStmt(Body);
+
+    CGM.OpenMPSupport.stopSparkRegion();
   }
 
   // If there is an increment, emit it next.

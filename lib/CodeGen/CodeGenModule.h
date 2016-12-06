@@ -1281,6 +1281,7 @@ public:
 
       OMPSparkMappingInfo *SparkMappingInfo;
       llvm::SmallVector<OMPSparkMappingInfo *, 16> SparkMappingFunctions;
+      bool IsSparkTargetRegion;
 
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsIndex;
       llvm::DenseMap<const ValueDecl *, unsigned> OffloadingMapVarsType;
@@ -1361,6 +1362,13 @@ public:
       OpenMPStack.push_back(OMPStackElemTy(CGM));
       OpenMPStack.back().NewTask = NewTask;
     }
+    void startSparkRegion() {
+      OpenMPStack.back().IsSparkTargetRegion = true;
+    }
+    void stopSparkRegion() {
+      OpenMPStack.back().IsSparkTargetRegion = false;
+    }
+    bool isSparkTargetRegion() { return OpenMPStack.back().IsSparkTargetRegion; };
     bool isNewTask() { return OpenMPStack.back().NewTask; };
     void endOpenMPRegion();
     void addOpenMPPrivateVar(const VarDecl *VD, llvm::Value *Addr) {

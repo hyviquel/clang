@@ -2307,6 +2307,9 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
     if (isTargetMode)
       CGM.getOpenMPRuntime().StartNewTargetRegion();
 
+    bool isSparkTarget = isTargetMode &&
+        CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
+
     // Codegen target clauses init, this currently include
     // - device clause
     // - map clause
@@ -2447,11 +2450,8 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         break;
       }
 
-      bool isSparkTarget = isTargetMode &&
-          CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
-      if(isSparkTarget) {
+      if(isSparkTarget)
         EmitSparkJob();
-      }
 
       if (isTargetMode)
         // at the end of the target region, set next label as the finishing case
@@ -7110,6 +7110,9 @@ void CodeGenFunction::EmitOMPTargetDirective(const OMPTargetDirective &S) {
 // Generate the instructions for '#pragma omp target data' directive.
 void CodeGenFunction::EmitOMPTargetDataDirective(
     const OMPTargetDataDirective &S) {
+
+  if(CGM.OpenMPSupport.isSparkTargetRegion())
+    return;
 
   CGM.OpenMPSupport.startOpenMPRegion(false);
   CGM.OpenMPSupport.setNoWait(false);

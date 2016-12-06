@@ -3967,7 +3967,7 @@ CodeGenModule::OpenMPSupportStackTy::OMPStackElemTy::OMPStackElemTy(
       Untied(false), HasLastPrivate(false), TaskPrivateTy(0), TaskPrivateQTy(),
       TaskPrivateBase(0), NumTeams(0), ThreadLimit(0), WaitDepsArgs(0),
       OffloadingHostFunctionCall(0), MapsBegin(0), MapsEnd(0), OffloadingDevice(0), CurrentIdentifier(0),
-      SparkMappingInfo(new OMPSparkMappingInfo) {}
+      SparkMappingInfo(new OMPSparkMappingInfo), IsSparkTargetRegion(false) {}
 
 CodeGenFunction &CodeGenModule::OpenMPSupportStackTy::getCGFForReductionFunction() {
   if (!OpenMPStack.back().RedCGF) {
