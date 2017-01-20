@@ -7111,8 +7111,28 @@ void CodeGenFunction::EmitOMPTargetDirective(const OMPTargetDirective &S) {
 void CodeGenFunction::EmitOMPTargetDataDirective(
     const OMPTargetDataDirective &S) {
 
-  if(CGM.OpenMPSupport.isSparkTargetRegion())
-    return;
+  if(CGM.OpenMPSupport.isSparkTargetRegion()) {
+    Stmt *Body = S.getAssociatedStmt();
+
+    if (CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
+      Body = CS->getCapturedStmt();
+
+    bool SkippedContainers = false;
+    while (!SkippedContainers) {
+      if (AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
+        Body = AS->getSubStmt();
+      else if ( CompoundStmt *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
+        if (CS->size() != 1) {
+          SkippedContainers = true;
+        } else {
+          Body = CS->body_back();
+        }
+      } else
+        SkippedContainers = true;
+    }
+
+    return EmitStmt(Body);
+  }
 
   CGM.OpenMPSupport.startOpenMPRegion(false);
   CGM.OpenMPSupport.setNoWait(false);

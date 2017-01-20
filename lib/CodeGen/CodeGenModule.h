@@ -1210,14 +1210,17 @@ public:
   void EmitOMPDeclareTarget(const OMPDeclareTargetDecl *D);
 
   struct OMPSparkMappingInfo {
-    llvm::SmallSet<const VarDecl *, 16> Inputs;
+    llvm::SmallSet<const VarDecl*, 16> Inputs;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputOutputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
+    llvm::DenseMap<const VarDecl*, const CEANIndexExpr*> RangedVar;
+    llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> RangedArrayAccess;
+    llvm::DenseMap<const Expr *, llvm::Value *> RangeIndexes;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> CounterUse;
     llvm::DenseMap<const VarDecl*, unsigned> InputStyle;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  CounterInfo;
-    llvm::DenseMap<const Expr *, llvm::Value *> KernelArgVars;
+    llvm::DenseMap<const VarDecl *, llvm::Value *> KernelArgVars;
     unsigned Identifier;
   };
 
@@ -1351,11 +1354,24 @@ public:
     /// \brief Checks, if the specified variable is currently an argument.
     /// \return 0 if the variable is not an argument, or address of the arguments
     /// otherwise.
-    llvm::Value *getOpenMPKernelArgVar(const Expr *VarExpr) {
+    llvm::Value *getOpenMPKernelArgVar(const VarDecl *VD) {
       if (OpenMPStack.empty()) return 0;
       auto *info = getCurrentSparkMappingInfo();
-      if (info != nullptr && info->KernelArgVars.count(VarExpr) > 0 && info->KernelArgVars[VarExpr])
-        return info->KernelArgVars[VarExpr];
+      if (info != nullptr && info->KernelArgVars.count(VD) > 0 && info->KernelArgVars[VD])
+        return info->KernelArgVars[VD];
+      return 0;
+    }
+    /// \brief Checks, if the specified variable is currently an argument.
+    /// \return 0 if the variable is not an argument, or address of the arguments
+    /// otherwise.
+    llvm::Value *getOpenMPKernelArgRange(const Expr *VarExpr) {
+      if (OpenMPStack.empty()) return 0;
+      auto *info = getCurrentSparkMappingInfo();
+      if (info != nullptr) {
+        if (llvm::Value *Range = info->RangeIndexes[VarExpr]) {
+          return Range;
+        }
+      }
       return 0;
     }
     void startOpenMPRegion(bool NewTask) {
@@ -1386,15 +1402,18 @@ public:
              "OpenMP private variables region is not started.");
       OpenMPStack[OpenMPStack.size() - 2].PrivateVars[VD] = 0;
     }
-    void addOpenMPKernelArgVar(const Expr *VarExpr, llvm::Value *Addr) {
+    void addOpenMPKernelArgVar(const VarDecl *VD, llvm::Value *Addr) {
       assert(!OpenMPStack.empty() &&
              "OpenMP private variables region is not started.");
-      getCurrentSparkMappingInfo()->KernelArgVars[VarExpr] = Addr;
+      getCurrentSparkMappingInfo()->KernelArgVars[VD] = Addr;
     }
-    void delOpenMPKernelArgVar(const Expr *VarExpr) {
+    void addOpenMPKernelArgRange(const Expr *E, llvm::Value *Addr) {
+      getCurrentSparkMappingInfo()->RangeIndexes[E] = Addr;
+    }
+    void delOpenMPKernelArgVar(const VarDecl *VD) {
       assert(!OpenMPStack.empty() &&
              "OpenMP private variables region is not started.");
-      getCurrentSparkMappingInfo()->KernelArgVars[VarExpr] = 0;
+      getCurrentSparkMappingInfo()->KernelArgVars[VD] = 0;
     }
     void setIfDest(llvm::BasicBlock *EndBB) {OpenMPStack.back().IfEnd = EndBB;}
     llvm::BasicBlock *takeIfDest() {

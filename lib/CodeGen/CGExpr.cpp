@@ -1906,7 +1906,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   if (const auto *VD = dyn_cast<VarDecl>(ND)) {
     // CodeGen for threadprivate variables.
     if (getLangOpts().OpenMP) {
-      if (llvm::Value *Val = (CGM.OpenMPSupport.getOpenMPKernelArgVar(E)))
+      if (llvm::Value *Val = (CGM.OpenMPSupport.getOpenMPKernelArgVar(VD)))
         return MakeAddrLValue(Val, T, Alignment);
       else if (llvm::Value *Val =
               CGM.getOpenMPRuntime().CreateOpenMPThreadPrivateCached(
@@ -2450,6 +2450,14 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
 
   // The index must always be an integer, which is not an aggregate.  Emit it.
   llvm::Value *Idx = EmitScalarExpr(E->getIdx());
+  if (getLangOpts().OpenMP)
+    if (llvm::Value *LowerBound = CGM.OpenMPSupport.getOpenMPKernelArgRange(E)) {
+      E->dump();
+      LowerBound->dump();
+      llvm::errs() << "generate substraction by lower bound\n";
+      Idx = Builder.CreateSub(Idx, LowerBound);
+    }
+
   QualType IdxTy  = E->getIdx()->getType();
   bool IdxSigned = IdxTy->isSignedIntegerOrEnumerationType();
 

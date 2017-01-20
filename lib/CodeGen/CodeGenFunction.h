@@ -2238,7 +2238,6 @@ public:
   void EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE);
   void EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGenModule::OMPSparkMappingInfo &info);
   void EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE);
-  std::string getSparkExprOf(const Expr *ExprValue);
   std::string getSparkVarName(const ValueDecl *VD);
 
   llvm::Function *EmitCapturedStmt(const CapturedStmt &S, CapturedRegionKind K);
