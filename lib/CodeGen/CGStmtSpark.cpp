@@ -469,15 +469,16 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << getSparkVarName(VD);
     SPARK_FILE << " = ";
 
+    SPARK_FILE << "mapres2_" << MappingId;
+
     if (NbOutputs == 1) {
       // 1 output -> return the result directly
-      SPARK_FILE << "mapres2_" << MappingId;
     } else if (NbOutputs == 2 || NbOutputs == 3) {
       // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-      SPARK_FILE << "mapres2_" << MappingId << ".map{_._" << i + 1 << "}";
+      SPARK_FILE << ".map{ x => (x._1, x._2._" << i + 1 << ") }";
     } else {
       // More than 3 outputs -> extract each variable from the Collection
-      SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
+      SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
     if (CGM.OpenMPSupport.isReduced(VD))
       SPARK_FILE
@@ -531,15 +532,16 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << getSparkVarName(VD);
     SPARK_FILE << " = ";
 
+    SPARK_FILE << "mapres2_" << MappingId;
+
     if (NbOutputs == 1) {
       // 1 output -> return the result directly
-      SPARK_FILE << "mapres2_" << MappingId;
     } else if (NbOutputs == 2 || NbOutputs == 3) {
       // 2 or 3 outputs -> extract each variable from the Tuple2 or Tuple3
-      SPARK_FILE << "mapres2_" << MappingId << ".map{_._" << i + 1 << "}";
+      SPARK_FILE << ".map{ x => (x._1, x._2._" << i + 1 << ") }";
     } else {
       // More than 3 outputs -> extract each variable from the Collection
-      SPARK_FILE << "mapres2_" << MappingId << ".map{ x => x(" << i << ") }";
+      SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
     if (CGM.OpenMPSupport.isReduced(VD))
       SPARK_FILE
