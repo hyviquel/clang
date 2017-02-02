@@ -441,9 +441,13 @@ void CodeGenFunction::EmitSparkMapping(
     const VarDecl *VD = it->first;
     const CEANIndexExpr *Range = info.RangedVar[VD];
     int id = IndexMap[VD];
-    SPARK_FILE << ", sizeOf_" << getSparkVarName(VD);
+    SPARK_FILE << ", ";
+
     if (Range) {
-      SPARK_FILE << " / blockSize_" << MappingId << "_" << NbIndex;
+      SPARK_FILE << "(sizeOf_" << getSparkVarName(VD) << " / blockSize_"
+                 << MappingId << "_" << NbIndex << ").toInt";
+    } else {
+      SPARK_FILE << "sizeOf_" << getSparkVarName(VD);
     }
   }
 
