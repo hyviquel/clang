@@ -41,7 +41,7 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 
-#define VERBOSE 0
+#define VERBOSE 1
 
 using namespace clang;
 using namespace CodeGen;
@@ -285,6 +285,7 @@ std::string CodeGenFunction::getSparkVarName(const ValueDecl *VD) {
 }
 
 void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
+  bool verbose = VERBOSE;
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto &TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
@@ -318,6 +319,10 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     SPARK_FILE << "    val sizeOf_" << getSparkVarName(VD) << " = at.get("
                << OffloadId << ")\n";
+    if (verbose)
+      SPARK_FILE << "    println(\"XXXX DEBUG XXXX SizeOf "
+                 << getSparkVarName(VD) << "= \" + sizeOf_"
+                 << getSparkVarName(VD) << ")\n";
 
     if (NeedBcast)
       SPARK_FILE << "    var " << getSparkVarName(VD)
@@ -325,12 +330,15 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
                  << ")\n";
   }
 
+  SPARK_FILE << "val _parallelism = info.getParallelism\n";
+
   SPARK_FILE << "\n";
 }
 
 void CodeGenFunction::EmitSparkMapping(
     llvm::raw_fd_ostream &SPARK_FILE,
     CodeGenModule::OMPSparkMappingInfo &info) {
+  bool verbose = VERBOSE;
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   unsigned MappingId = info.Identifier;
   SparkExprPrinter MappingPrinter(SPARK_FILE, getContext(), info, "x.toInt");
@@ -358,7 +366,7 @@ void CodeGenFunction::EmitSparkMapping(
     SPARK_FILE << ".toLong\n";
     SPARK_FILE << "    val blockSize_" << MappingId << "_" << NbIndex
                << " = ((bound_" << MappingId << "_" << NbIndex
-               << ").toFloat/info.getParallelism).floor.toLong\n";
+               << ").toFloat/_parallelism).floor.toLong\n";
 
     SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (";
     MappingPrinter.PrintExpr(Init);
@@ -368,7 +376,33 @@ void CodeGenFunction::EmitSparkMapping(
     }
     SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex << ").toDS()";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
+
+    if (verbose) {
+      SPARK_FILE << "    println(\"XXXX DEBUG XXXX blockSize = "
+                    "\" + blockSize_"
+                 << MappingId << "_" << NbIndex << ")\n";
+      SPARK_FILE << "    println(\"XXXX DEBUG XXXX bound = \" + bound_"
+                 << MappingId << "_" << NbIndex << ")\n";
+    }
     NbIndex++;
+  }
+
+  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+       ++it) {
+    const VarDecl *VD = it->first;
+    const CEANIndexExpr *Range = info.RangedVar[VD];
+    int id = IndexMap[VD];
+
+    if (Range) {
+      SPARK_FILE << "    val rangedSizeOf_" << getSparkVarName(VD)
+                 << " = (sizeOf_" << getSparkVarName(VD)
+                 << " / _parallelism).toInt\n";
+      if (verbose) {
+        SPARK_FILE << "    println(\"XXXX DEBUG XXXX rangedSizeOf_"
+                   << VD->getName() << " = \" + rangedSizeOf_"
+                   << getSparkVarName(VD) << ")\n";
+      }
+    }
   }
 
   SPARK_FILE << "    val index_" << MappingId << " = index_" << MappingId
@@ -444,8 +478,7 @@ void CodeGenFunction::EmitSparkMapping(
     SPARK_FILE << ", ";
 
     if (Range) {
-      SPARK_FILE << "(sizeOf_" << getSparkVarName(VD) << " / blockSize_"
-                 << MappingId << "_" << NbIndex << ").toInt";
+      SPARK_FILE << "rangedSizeOf_" << getSparkVarName(VD);
     } else {
       SPARK_FILE << "sizeOf_" << getSparkVarName(VD);
     }
