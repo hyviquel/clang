@@ -435,6 +435,10 @@ void CodeGenFunction::EmitSparkMapping(
     }
     // NbIndex++;
   }
+  SparkExprPrinter RangePrinter(SPARK_FILE, getContext(), info,
+                                "x.toInt + blockSize_" +
+                                    std::to_string(MappingId) + "_0.toInt");
+
   for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
@@ -445,10 +449,10 @@ void CodeGenFunction::EmitSparkMapping(
     if (Range) {
       SPARK_FILE << ".slice((";
       MappingPrinter.PrintExpr(Range->getLowerBound());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", (";
-      MappingPrinter.PrintExpr(Range->getLength());
-      SPARK_FILE << ") * blockSize_" << MappingId << "_" << NbIndex
-                 << ".toInt * eltSizeOf_" << getSparkVarName(VD) << ")";
+      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+      RangePrinter.PrintExpr(Range->getLength());
+      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                 << getSparkVarName(VD) << "))";
     } else if (NeedBcast)
       SPARK_FILE << "_bcast.value";
   }
@@ -463,10 +467,10 @@ void CodeGenFunction::EmitSparkMapping(
     if (Range) {
       SPARK_FILE << ".slice((";
       MappingPrinter.PrintExpr(Range->getLowerBound());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", (";
-      MappingPrinter.PrintExpr(Range->getLength());
-      SPARK_FILE << ") * blockSize_" << MappingId << "_" << NbIndex
-                 << ".toInt * eltSizeOf_" << getSparkVarName(VD) << ")";
+      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+      RangePrinter.PrintExpr(Range->getLength());
+      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                 << getSparkVarName(VD) << "))";
     } else if (NeedBcast)
       SPARK_FILE << "_bcast.value";
   }
