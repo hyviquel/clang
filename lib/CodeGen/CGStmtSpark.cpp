@@ -71,7 +71,7 @@ void CodeGenFunction::EmitSparkJob() {
   SPARK_FILE << "  def main(args: Array[String]) {\n"
              << "    \n"
              << "    val info = new CloudInfo(args)\n"
-             << "    val fs = new CloudFileSystem(info.fs, args(3))\n"
+             << "    val fs = new CloudFileSystem(info.fs, args(3), args(4))\n"
              << "    val at = AddressTable.create(fs)\n"
              << "    info.init(fs)\n"
              << "    \n"
@@ -304,6 +304,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
     }
     int64_t SizeInByte = getContext().getTypeSize(VarType) / 8;
 
+    SPARK_FILE << "    val sizeOf_" << getSparkVarName(VD) << " = at.get("
+               << OffloadId << ")\n";
     SPARK_FILE << "    val eltSizeOf_" << getSparkVarName(VD) << " = "
                << SizeInByte << "\n";
 
@@ -311,14 +313,13 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
         OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
 
       SPARK_FILE << "    var " << getSparkVarName(VD) << " = fs.read("
-                 << OffloadId << ", " << SizeInByte << ")\n";
+                 << OffloadId << ", sizeOf_" << getSparkVarName(VD) << ")\n";
 
     } else if (OffloadType == OMP_TGT_MAPTYPE_FROM) {
       SPARK_FILE << "    var " << getSparkVarName(VD)
                  << " = new Array[Byte](0)\n";
     }
-    SPARK_FILE << "    val sizeOf_" << getSparkVarName(VD) << " = at.get("
-               << OffloadId << ")\n";
+
     if (verbose)
       SPARK_FILE << "    println(\"XXXX DEBUG XXXX SizeOf "
                  << getSparkVarName(VD) << "= \" + sizeOf_"
@@ -637,7 +638,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     if (OffloadType == OMP_TGT_MAPTYPE_FROM ||
         OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-      SPARK_FILE << "    fs.write(" << OffloadId << ", " << getSparkVarName(VD)
+      SPARK_FILE << "    fs.write(" << OffloadId << ", sizeOf_" << getSparkVarName(VD) << ", " << getSparkVarName(VD)
                  << ")\n";
     }
   }
