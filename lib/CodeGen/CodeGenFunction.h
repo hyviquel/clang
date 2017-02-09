@@ -2236,7 +2236,7 @@ public:
   void EmitSparkJob();
   void EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE);
   void EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE);
-  void EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGenModule::OMPSparkMappingInfo &info);
+  void EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE, CodeGenModule::OMPSparkMappingInfo &info, bool isLast);
   void EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE);
   std::string getSparkVarName(const ValueDecl *VD);
 

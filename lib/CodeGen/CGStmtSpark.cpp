@@ -83,7 +83,7 @@ void CodeGenFunction::EmitSparkJob() {
   auto &mappingFunctions = CGM.OpenMPSupport.getSparkMappingFunctions();
 
   for (auto it = mappingFunctions.begin(); it != mappingFunctions.end(); it++) {
-    EmitSparkMapping(SPARK_FILE, **it);
+    EmitSparkMapping(SPARK_FILE, **it, (it+1)==mappingFunctions.end());
   }
 
   EmitSparkOutput(SPARK_FILE);
@@ -338,7 +338,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
 void CodeGenFunction::EmitSparkMapping(
     llvm::raw_fd_ostream &SPARK_FILE,
-    CodeGenModule::OMPSparkMappingInfo &info) {
+    CodeGenModule::OMPSparkMappingInfo &info,
+    bool isLast) {
   bool verbose = VERBOSE;
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   unsigned MappingId = info.Identifier;
@@ -552,7 +553,7 @@ void CodeGenFunction::EmitSparkMapping(
                  << "}\n";
     }
 
-    if (NeedBcast)
+    if (NeedBcast && !isLast)
       SPARK_FILE << getSparkVarName(VD) << "_bcast = info.sc.broadcast("
                  << getSparkVarName(VD) << ")\n";
 
@@ -613,7 +614,7 @@ void CodeGenFunction::EmitSparkMapping(
                  << "    }\n";
     }
 
-    if (NeedBcast)
+    if (NeedBcast && !isLast)
       SPARK_FILE << "    " << getSparkVarName(VD)
                  << "_bcast = info.sc.broadcast(" << getSparkVarName(VD)
                  << ")\n";
