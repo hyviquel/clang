@@ -331,7 +331,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
                  << ")\n";
   }
 
-  SPARK_FILE << "val _parallelism = info.getParallelism\n";
+  SPARK_FILE << "    val _parallelism = info.getParallelism\n";
 
   SPARK_FILE << "\n";
 }
