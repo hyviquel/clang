@@ -492,8 +492,6 @@ void CodeGenFunction::EmitSparkMapping(
   SPARK_FILE << ")) }\n";
 
   SPARK_FILE << "    // 3 - Merge back the results\n";
-  SPARK_FILE << "    val mapres2_" << MappingId << " = mapres_" << MappingId
-             << ".repartition(info.getExecutorNumber.toInt)\n";
 
   i = 0;
   unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
@@ -511,7 +509,7 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << getSparkVarName(VD);
     SPARK_FILE << " = ";
 
-    SPARK_FILE << "mapres2_" << MappingId;
+    SPARK_FILE << "mapres_" << MappingId;
 
     if (NbOutputs == 1) {
       // 1 output -> return the result directly
@@ -529,7 +527,7 @@ void CodeGenFunction::EmitSparkMapping(
     else if (Range)
       SPARK_FILE << ".collect()";
     else
-      SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => Util.bitor(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 }.repartition(info.getExecutorNumber.toInt).reduce{(x, y) => Util.bitor(x, y)}";
     SPARK_FILE << "\n";
 
     if (Range) {
@@ -574,7 +572,7 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << getSparkVarName(VD);
     SPARK_FILE << " = ";
 
-    SPARK_FILE << "mapres2_" << MappingId;
+    SPARK_FILE << "mapres_" << MappingId;
 
     if (NbOutputs == 1) {
       // 1 output -> return the result directly
@@ -592,7 +590,7 @@ void CodeGenFunction::EmitSparkMapping(
     if (Range)
       SPARK_FILE << ".collect()";
     else
-      SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => Util.bitor(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 }.repartition(info.getExecutorNumber.toInt).reduce{(x, y) => Util.bitor(x, y)}";
     SPARK_FILE << "\n";
 
     if (Range) {
