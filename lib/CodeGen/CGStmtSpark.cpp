@@ -83,7 +83,7 @@ void CodeGenFunction::EmitSparkJob() {
   auto &mappingFunctions = CGM.OpenMPSupport.getSparkMappingFunctions();
 
   for (auto it = mappingFunctions.begin(); it != mappingFunctions.end(); it++) {
-    EmitSparkMapping(SPARK_FILE, **it, (it+1)==mappingFunctions.end());
+    EmitSparkMapping(SPARK_FILE, **it, (it + 1) == mappingFunctions.end());
   }
 
   EmitSparkOutput(SPARK_FILE);
@@ -336,10 +336,9 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << "\n";
 }
 
-void CodeGenFunction::EmitSparkMapping(
-    llvm::raw_fd_ostream &SPARK_FILE,
-    CodeGenModule::OMPSparkMappingInfo &info,
-    bool isLast) {
+void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
+                                       CodeGenModule::OMPSparkMappingInfo &info,
+                                       bool isLast) {
   bool verbose = VERBOSE;
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   unsigned MappingId = info.Identifier;
@@ -376,7 +375,7 @@ void CodeGenFunction::EmitSparkMapping(
     if (BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
     }
-    SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex << ").toDS()";
+    SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex << ")";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
 
     if (verbose) {
@@ -407,87 +406,120 @@ void CodeGenFunction::EmitSparkMapping(
     }
   }
 
+  // We need to explicitly create Tuple1 if there is no ranged input.
+  int NumberOfRangedInput = 0;
+  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
+    if (const CEANIndexExpr *Range = info.RangedVar[it->first])
+      NumberOfRangedInput++;
+  for (auto it = info.InputOutputVarUse.begin();
+       it != info.InputOutputVarUse.end(); ++it)
+    if (const CEANIndexExpr *Range = info.RangedVar[it->first])
+      NumberOfRangedInput++;
+
+  SparkExprPrinter InputStartRangePrinter(SPARK_FILE, getContext(), info,
+                                          "x.toInt");
+  SparkExprPrinter InputEndRangePrinter(
+      SPARK_FILE, getContext(), info,
+      "x.toInt + blockSize_" + std::to_string(MappingId) + "_0.toInt");
+
   SPARK_FILE << "    val index_" << MappingId << " = index_" << MappingId
              << "_0";
   for (int i = 1; i < NbIndex; i++) {
     SPARK_FILE << ".cartesian(index_" << MappingId << "_" << i << ")";
   }
-  SPARK_FILE << "\n"; // FIXME: Inverse with more indexes
+  SPARK_FILE << ".map{ x => ";
+
+  if (NumberOfRangedInput == 0) {
+    SPARK_FILE << "Tuple1(x)";
+  } else {
+    SPARK_FILE << "(x";
+    for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end();
+         ++it) {
+      const VarDecl *VD = it->first;
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        // Separator
+        SPARK_FILE << ", ";
+        SPARK_FILE << getSparkVarName(VD);
+        SPARK_FILE << ".slice((";
+        InputStartRangePrinter.PrintExpr(Range->getLowerBound());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+        InputEndRangePrinter.PrintExpr(Range->getLength());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                   << getSparkVarName(VD) << "))";
+      }
+    }
+    for (auto it = info.InputOutputVarUse.begin();
+         it != info.InputOutputVarUse.end(); ++it) {
+      const VarDecl *VD = it->first;
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        // Separator
+        SPARK_FILE << ", ";
+        SPARK_FILE << getSparkVarName(VD);
+        SPARK_FILE << ".slice((";
+        InputStartRangePrinter.PrintExpr(Range->getLowerBound());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+        InputEndRangePrinter.PrintExpr(Range->getLength());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                   << getSparkVarName(VD) << "))";
+      }
+    }
+    SPARK_FILE << ")";
+  }
+  SPARK_FILE << "}.toDS()\n"; // FIXME: Inverse with more indexes
 
   SPARK_FILE << "    // 2 - Perform Map operations\n";
   SPARK_FILE << "    val mapres_" << MappingId << " = index_" << MappingId
-             << ".map{ x => (x, new OmpKernel().mapping" << MappingId << "(";
+             << ".map{ x => (x._1, new OmpKernel().mapping" << MappingId << "(";
 
   // Assign each argument according to its type
+  // x = (index, sliceOfInput1, sliceOfInput2, ...)
   int i = 1;
   NbIndex = 0;
-  for (auto it = info.CounterUse.begin(); it != info.CounterUse.end();
-       ++it, i++) {
+  for (auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it) {
     // Separator
     if (it != info.CounterUse.begin())
       SPARK_FILE << ", ";
-    if (info.CounterInfo.size() == 1) {
-      SPARK_FILE << "x, Math.min(x+blockSize_" << MappingId << "_" << NbIndex
-                 << "-1, bound_" << MappingId << "_" << NbIndex << "-1)";
-    } else {
-      SPARK_FILE << "x._" << i << ", Math.min(x._" << i << "+blockSize_"
-                 << MappingId << "_" << NbIndex << "-1, bound_" << MappingId
-                 << "_" << NbIndex << "-1)";
-      i++;
-    }
-    // NbIndex++;
+    SPARK_FILE << "x._" << i << ", Math.min(x._" << i << "+blockSize_"
+               << MappingId << "_" << NbIndex << "-1, bound_" << MappingId
+               << "_" << NbIndex << "-1)";
+    i++;
   }
-  SparkExprPrinter RangePrinter(SPARK_FILE, getContext(), info,
-                                "x.toInt + blockSize_" +
-                                    std::to_string(MappingId) + "_0.toInt");
 
   for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
-    const CEANIndexExpr *Range = info.RangedVar[VD];
     // Separator
     SPARK_FILE << ", ";
-    SPARK_FILE << getSparkVarName(VD);
-    if (Range) {
-      SPARK_FILE << ".slice((";
-      MappingPrinter.PrintExpr(Range->getLowerBound());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
-      RangePrinter.PrintExpr(Range->getLength());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
-                 << getSparkVarName(VD) << "))";
-    } else if (NeedBcast)
-      SPARK_FILE << "_bcast.value";
+    if (const CEANIndexExpr *Range = info.RangedVar[VD])
+      SPARK_FILE << "x._" << i++;
+    else if (NeedBcast)
+      SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
+    else
+      SPARK_FILE << getSparkVarName(VD);
   }
   for (auto it = info.InputOutputVarUse.begin();
        it != info.InputOutputVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
-    const CEANIndexExpr *Range = info.RangedVar[VD];
     // Separator
     SPARK_FILE << ", ";
-    SPARK_FILE << getSparkVarName(VD);
-    if (Range) {
-      SPARK_FILE << ".slice((";
-      MappingPrinter.PrintExpr(Range->getLowerBound());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
-      RangePrinter.PrintExpr(Range->getLength());
-      SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
-                 << getSparkVarName(VD) << "))";
-    } else if (NeedBcast)
-      SPARK_FILE << "_bcast.value";
+    if (const CEANIndexExpr *Range = info.RangedVar[VD])
+      SPARK_FILE << "x._" << i++;
+    else if (NeedBcast)
+      SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
+    else
+      SPARK_FILE << getSparkVarName(VD);
   }
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
     const VarDecl *VD = it->first;
-    const CEANIndexExpr *Range = info.RangedVar[VD];
     int id = IndexMap[VD];
     SPARK_FILE << ", ";
 
-    if (Range) {
+    if (const CEANIndexExpr *Range = info.RangedVar[VD])
       SPARK_FILE << "rangedSizeOf_" << getSparkVarName(VD);
-    } else {
+    else
       SPARK_FILE << "sizeOf_" << getSparkVarName(VD);
-    }
   }
 
   SPARK_FILE << ")) }\n";
@@ -522,13 +554,15 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
     if (CGM.OpenMPSupport.isReduced(VD))
-      SPARK_FILE
-          << ".map{ x => x._2 }.reduce{(x, y) => new OmpKernel().reduceMethod"
-          << VD->getName() << "(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => new "
+                    "OmpKernel().reduceMethod"
+                 << VD->getName() << "(x, y)}";
     else if (Range)
       SPARK_FILE << ".collect()";
     else
-      SPARK_FILE << ".map{ x => x._2 }.repartition(info.getExecutorNumber.toInt).reduce{(x, y) => Util.bitor(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 "
+                    "}.repartition(info.getExecutorNumber.toInt).reduce{(x, y) "
+                    "=> Util.bitor(x, y)}";
     SPARK_FILE << "\n";
 
     if (Range) {
@@ -585,13 +619,15 @@ void CodeGenFunction::EmitSparkMapping(
       SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
     if (CGM.OpenMPSupport.isReduced(VD))
-      SPARK_FILE
-          << ".map{ x => x._2 }.reduce{(x, y) => new OmpKernel().reduceMethod"
-          << VD->getName() << "(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => new "
+                    "OmpKernel().reduceMethod"
+                 << VD->getName() << "(x, y)}";
     if (Range)
       SPARK_FILE << ".collect()";
     else
-      SPARK_FILE << ".map{ x => x._2 }.repartition(info.getExecutorNumber.toInt).reduce{(x, y) => Util.bitor(x, y)}";
+      SPARK_FILE << ".map{ x => x._2 "
+                    "}.repartition(info.getExecutorNumber.toInt).reduce{(x, y) "
+                    "=> Util.bitor(x, y)}";
     SPARK_FILE << "\n";
 
     if (Range) {
@@ -637,8 +673,8 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     if (OffloadType == OMP_TGT_MAPTYPE_FROM ||
         OffloadType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-      SPARK_FILE << "    fs.write(" << OffloadId << ", sizeOf_" << getSparkVarName(VD) << ", " << getSparkVarName(VD)
-                 << ")\n";
+      SPARK_FILE << "    fs.write(" << OffloadId << ", sizeOf_"
+                 << getSparkVarName(VD) << ", " << getSparkVarName(VD) << ")\n";
     }
   }
 }
