@@ -69,6 +69,7 @@ void CodeGenFunction::EmitSparkJob() {
              << "\n";
 
   SPARK_FILE << "  def main(args: Array[String]) {\n"
+             << "    var i = 0 // used for loop index\n"
              << "    \n"
              << "    val info = new CloudInfo(args)\n"
              << "    val fs = new CloudFileSystem(info.fs, args(3), args(4))\n"
@@ -574,17 +575,15 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
       SPARK_FILE << "    " << getSparkVarName(VD)
                  << " = new Array[Byte](sizeOf_" << getSparkVarName(VD)
                  << ")\n";
-      SPARK_FILE << "    "
-                 << "var i = 0\n";
-      SPARK_FILE << "    "
-                 << "while (i < " << getSparkVarName(VD) << "_tmp_" << MappingId
-                 << ".length) {\n";
+      SPARK_FILE << "    i = 0\n";
+      SPARK_FILE << "    while (i < " << getSparkVarName(VD) << "_tmp_"
+                 << MappingId << ".length) {\n";
       SPARK_FILE << "      " << getSparkVarName(VD) << "_tmp_" << MappingId
                  << "(i)._2.copyToArray(" << getSparkVarName(VD) << ", (";
       RangePrinter.PrintExpr(Range->getLowerBound());
       SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ")\n"
                  << "      i += 1\n"
-                 << "}\n";
+                 << "    }\n";
     }
 
     if (NeedBcast && !isLast)
@@ -639,7 +638,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
       SPARK_FILE << "    " << getSparkVarName(VD)
                  << " = new Array[Byte](sizeOf_" << getSparkVarName(VD)
                  << ")\n";
-      SPARK_FILE << "    var i = 0\n";
+      SPARK_FILE << "    i = 0\n";
       SPARK_FILE << "    while (i < " << getSparkVarName(VD) << "_tmp_"
                  << MappingId << ".length) {\n";
       SPARK_FILE << "      " << getSparkVarName(VD) << "_tmp_" << MappingId
