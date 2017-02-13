@@ -496,7 +496,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     else if (NeedBcast)
       SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
     else
-      SPARK_FILE << getSparkVarName(VD);
+      SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
   for (auto it = info.InputOutputVarUse.begin();
        it != info.InputOutputVarUse.end(); ++it) {
@@ -509,7 +509,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     else if (NeedBcast)
       SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
     else
-      SPARK_FILE << getSparkVarName(VD);
+      SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
