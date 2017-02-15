@@ -397,9 +397,10 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
             << "version := \"0.2.0\"\n"
             << "\n"
             << "scalaVersion := \"2.11.8\"\n"
+            << "val sparkVersion = \"2.1.0\"\n"
             << "\n"
-            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % \"2.0.0\" % \"provided\"\n"
-            << "libraryDependencies += \"org.apache.spark\" %% \"spark-sql\" % \"2.0.0\" % \"provided\"\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % sparkVersion % \"provided\"\n"
+            << "libraryDependencies += \"org.apache.spark\" %% \"spark-sql\" % sparkVersion % \"provided\"\n"
             << "\n"
             << "libraryDependencies += \"org.llvm.openmp\" %% \"omptarget-spark\" % \"0.2.0-SNAPSHOT\"\n";
 
