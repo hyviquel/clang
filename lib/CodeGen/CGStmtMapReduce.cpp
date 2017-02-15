@@ -575,7 +575,7 @@ public:
       assert(RefExpr && "Unexpected expression in the map clause");
 
       VD->dump();
-      //CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
+      // CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
     }
 
     return true;
@@ -592,7 +592,7 @@ public:
     while (!SkippedContainers) {
       if (AttributedStmt *AS = dyn_cast_or_null<AttributedStmt>(Body))
         Body = AS->getSubStmt();
-      else if ( CompoundStmt *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
+      else if (CompoundStmt *CS = dyn_cast_or_null<CompoundStmt>(Body)) {
         if (CS->size() != 1) {
           SkippedContainers = true;
         } else {
@@ -1107,7 +1107,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Detect input/output expression from the loop body
   FindKernelArguments Finder(CGM);
-  //LoopStmt->dump();
+  // LoopStmt->dump();
   Finder.TraverseStmt(LoopStmt);
 
   // Get JNI type
@@ -1239,6 +1239,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::LoadInst *ptr_fn_releasecritical =
       CGF.Builder.CreateLoad(ptr_gep_releasecritical, "");
 
+  llvm::Value *ptr_gep_newbytearray =
+      CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
+  llvm::LoadInst *ptr_fn_newbytearray =
+      CGF.Builder.CreateLoad(ptr_gep_newbytearray, "");
+
   // Keep values that have to be used for releasing.
   llvm::SmallVector<llvm::Value *, 8> VecPtrBarrays;
   llvm::SmallVector<llvm::Value *, 8> VecPtrValues;
@@ -1272,7 +1277,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
 
     CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, alloca_cnt);
-
   }
 
   // Allocate, load and cast input variables (i.e. the arguments)
@@ -1330,13 +1334,12 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
       CGF.Builder.CreateStore(ptr_265, valuePtr);
 
-
       if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
         llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-        for(auto it = info.RangedArrayAccess[VD].begin(); it != info.RangedArrayAccess[VD].end(); ++it)
+        for (auto it = info.RangedArrayAccess[VD].begin();
+             it != info.RangedArrayAccess[VD].end(); ++it)
           CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-       }
-
+      }
     }
 
     CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
@@ -1383,9 +1386,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
       if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
         llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-        for(auto it = info.RangedArrayAccess[VD].begin(); it != info.RangedArrayAccess[VD].end(); ++it)
+        for (auto it = info.RangedArrayAccess[VD].begin();
+             it != info.RangedArrayAccess[VD].end(); ++it)
           CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-       }
+      }
 
     } else {
       llvm::Value *ptr_265 =
@@ -1396,12 +1400,13 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
       if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
         llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-        for(auto it = info.RangedArrayAccess[VD].begin(); it != info.RangedArrayAccess[VD].end(); ++it)
+        for (auto it = info.RangedArrayAccess[VD].begin();
+             it != info.RangedArrayAccess[VD].end(); ++it)
           CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-       }
+      }
     }
 
-   CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
+    CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
 
     args++;
   }
@@ -1421,13 +1426,11 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // CGF.Builder.CreateAlloca(CGF.Builder.getInt8Ty(), args);
 
     // NewByteArray
-    llvm::Value *ptr_275 =
-        CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
-    llvm::LoadInst *ptr_276 = CGF.Builder.CreateLoad(ptr_275, "");
     std::vector<llvm::Value *> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
     ptr_277_params.push_back(args);
-    llvm::CallInst *ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    llvm::CallInst *ptr_277 =
+        CGF.Builder.CreateCall(ptr_fn_newbytearray, ptr_277_params);
     ptr_277->setCallingConv(llvm::CallingConv::C);
     ptr_277->setTailCall(true);
 
@@ -1450,9 +1453,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
     if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
       llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-      for(auto it = info.RangedArrayAccess[VD].begin(); it != info.RangedArrayAccess[VD].end(); ++it)
+      for (auto it = info.RangedArrayAccess[VD].begin();
+           it != info.RangedArrayAccess[VD].end(); ++it)
         CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-     }
+    }
 
     CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, alloca_addr);
 
@@ -1532,7 +1536,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // Create a separate cleanup scope for the body, in case it is not
     // a compound statement.
     RunCleanupsScope BodyScope(CGF);
-
 
     // Generate kernel code
     if (const CompoundStmt *S = dyn_cast<CompoundStmt>(Body))
