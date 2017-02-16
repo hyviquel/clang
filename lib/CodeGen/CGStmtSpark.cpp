@@ -402,24 +402,6 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     NbIndex++;
   }
 
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-       ++it) {
-    const VarDecl *VD = it->first;
-    const CEANIndexExpr *Range = info.RangedVar[VD];
-    int id = IndexMap[VD];
-
-    if (Range) {
-      SPARK_FILE << "    val rangedSizeOf_" << getSparkVarName(VD)
-                 << " = (sizeOf_" << getSparkVarName(VD)
-                 << " / _parallelism).toInt\n";
-      if (verbose) {
-        SPARK_FILE << "    println(\"XXXX DEBUG XXXX rangedSizeOf_"
-                   << VD->getName() << " = \" + rangedSizeOf_"
-                   << getSparkVarName(VD) << ")\n";
-      }
-    }
-  }
-
   // We need to explicitly create Tuple1 if there is no ranged input.
   int NumberOfRangedInput = 0;
   for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
