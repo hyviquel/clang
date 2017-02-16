@@ -142,8 +142,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (unsigned j = 0; j < NbOutputSize; j++, i++)
-      SPARK_FILE << ", n" << i << ": Int";
+    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+         ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
     SPARK_FILE << ") : ";
     if (NbOutputs == 1)
       SPARK_FILE << "Array[Byte]";
@@ -177,8 +181,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (unsigned j = 0; j < NbOutputSize; j++, i++)
-      SPARK_FILE << ", n" << i << ": Int";
+    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+         ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i << ": Array[Byte]";
+    }
     SPARK_FILE << ") : ";
     if (NbOutputs == 1)
       SPARK_FILE << "Array[Byte]";
@@ -213,8 +221,12 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i;
     }
-    for (unsigned j = 0; j < NbOutputSize; j++, i++)
-      SPARK_FILE << ", n" << i;
+    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+         ++it, i++) {
+      // Separator
+      SPARK_FILE << ", ";
+      SPARK_FILE << "n" << i;
+    }
     SPARK_FILE << ")\n";
     SPARK_FILE << "  }\n\n";
 
@@ -318,7 +330,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
 
     } else if (OffloadType == OMP_TGT_MAPTYPE_FROM) {
       SPARK_FILE << "    var " << getSparkVarName(VD)
-                 << " = new Array[Byte](0)\n";
+                 << " = new Array[Byte](sizeOf_" << getSparkVarName(VD)
+                 << ")\n";
     }
 
     if (verbose)
@@ -464,6 +477,21 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
                    << getSparkVarName(VD) << "))";
       }
     }
+    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+         ++it) {
+      const VarDecl *VD = it->first;
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        // Separator
+        SPARK_FILE << ", ";
+        SPARK_FILE << getSparkVarName(VD);
+        SPARK_FILE << ".slice((";
+        InputStartRangePrinter.PrintExpr(Range->getLowerBound());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+        InputEndRangePrinter.PrintExpr(Range->getLength());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                   << getSparkVarName(VD) << "))";
+      }
+    }
     SPARK_FILE << ")";
   }
   SPARK_FILE << "}.toDS()\n"; // FIXME: Inverse with more indexes
@@ -514,13 +542,15 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
     const VarDecl *VD = it->first;
-    int id = IndexMap[VD];
+    bool NeedBcast = VD->getType()->isAnyPointerType();
+    // Separator
     SPARK_FILE << ", ";
-
     if (const CEANIndexExpr *Range = info.RangedVar[VD])
-      SPARK_FILE << "rangedSizeOf_" << getSparkVarName(VD);
+      SPARK_FILE << "x._" << i++;
+    else if (NeedBcast)
+      SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
     else
-      SPARK_FILE << "sizeOf_" << getSparkVarName(VD);
+      SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
 
   SPARK_FILE << ")) }\n";

@@ -1147,10 +1147,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     FuncTy_args.push_back(PointerTy_jobject);
   }
 
-  // Size of the outputs
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
-    FuncTy_args.push_back(IntTy_jint);
+    FuncTy_args.push_back(PointerTy_jobject);
   }
 
   llvm::FunctionType *FnTy = llvm::FunctionType::get(
@@ -1420,50 +1419,58 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
        ++it) {
     const VarDecl *VD = it->first;
 
-    QualType varType = VD->getType();
-    llvm::Type *TyObject_res = ConvertType(varType);
-    // llvm::AllocaInst *alloca_res =
-    // CGF.Builder.CreateAlloca(CGF.Builder.getInt8Ty(), args);
-
-    // NewByteArray
-    std::vector<llvm::Value *> ptr_277_params;
-    ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(args);
-    llvm::CallInst *ptr_277 =
-        CGF.Builder.CreateCall(ptr_fn_newbytearray, ptr_277_params);
-    ptr_277->setCallingConv(llvm::CallingConv::C);
-    ptr_277->setTailCall(true);
-
-    // GetByteArrayElements
+    // GetPrimitiveArrayCritical
     std::vector<llvm::Value *> ptr_load_arg_params;
     ptr_load_arg_params.push_back(ptr_env);
-    ptr_load_arg_params.push_back(ptr_277);
+    ptr_load_arg_params.push_back(args);
     ptr_load_arg_params.push_back(const_ptr_null);
-    llvm::CallInst *alloca_res =
-        CGF.Builder.CreateCall(ptr_fn_getelement, ptr_load_arg_params);
-    alloca_res->setCallingConv(llvm::CallingConv::C);
-    alloca_res->setTailCall(false);
+    llvm::CallInst *ptr_load_arg =
+        CGF.Builder.CreateCall(ptr_fn_getcritical, ptr_load_arg_params);
+    ptr_load_arg->setCallingConv(llvm::CallingConv::C);
+    ptr_load_arg->setTailCall(false);
 
-    CGF.Builder.CreateMemSet(alloca_res, CGF.Builder.getInt8(0), args, 1);
+    args->setName(VD->getName());
 
-    llvm::Value *cast_addr =
-        CGF.Builder.CreateBitOrPointerCast(alloca_res, TyObject_res);
-    llvm::AllocaInst *alloca_addr = CGF.Builder.CreateAlloca(TyObject_res);
-    CGF.Builder.CreateStore(cast_addr, alloca_addr);
+    VecOutBarrays.push_back(args);
+    VecOutValues.push_back(ptr_load_arg);
 
-    if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
-      llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-      for (auto it = info.RangedArrayAccess[VD].begin();
-           it != info.RangedArrayAccess[VD].end(); ++it)
-        CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
+    QualType varType = VD->getType();
+    llvm::Type *TyObject_arg = ConvertType(varType);
+
+    llvm::Value *valuePtr;
+
+    if (!varType->isAnyPointerType()) {
+      if (verbose)
+        llvm::errs() << ">Test< " << VD->getName() << " is scalar\n";
+
+      llvm::PointerType *PointerTy_arg =
+          llvm::PointerType::get(TyObject_arg, 0);
+      valuePtr = CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
+        for (auto it = info.RangedArrayAccess[VD].begin();
+             it != info.RangedArrayAccess[VD].end(); ++it)
+          CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
+      }
+
+    } else {
+      llvm::Value *ptr_265 =
+          CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
+
+      valuePtr = CGF.Builder.CreateAlloca(TyObject_arg);
+      CGF.Builder.CreateStore(ptr_265, valuePtr);
+
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
+        for (auto it = info.RangedArrayAccess[VD].begin();
+             it != info.RangedArrayAccess[VD].end(); ++it)
+          CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
+      }
     }
 
-    CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, alloca_addr);
+    CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
 
-    args->setName("sizeOf" + VD->getName());
-
-    VecOutBarrays.push_back(ptr_277);
-    VecOutValues.push_back(alloca_res);
     args++;
   }
 
@@ -1635,7 +1642,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     void_272_params.push_back(*OutValues);
     void_272_params.push_back(const_int32_0);
     llvm::CallInst *void_272 =
-        CGF.Builder.CreateCall(ptr_fn_releaseelement, void_272_params);
+        CGF.Builder.CreateCall(ptr_fn_releasecritical, void_272_params);
     void_272->setCallingConv(llvm::CallingConv::C);
     void_272->setTailCall(true);
 
