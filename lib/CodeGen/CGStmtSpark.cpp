@@ -411,6 +411,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
        it != info.InputOutputVarUse.end(); ++it)
     if (const CEANIndexExpr *Range = info.RangedVar[it->first])
       NumberOfRangedInput++;
+  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end(); ++it)
+    if (const CEANIndexExpr *Range = info.RangedVar[it->first])
+      NumberOfRangedInput++;
 
   SparkExprPrinter InputStartRangePrinter(SPARK_FILE, getContext(), info,
                                           "x.toInt");
