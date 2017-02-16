@@ -535,7 +535,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     if (const CEANIndexExpr *Range = info.RangedVar[VD])
       SPARK_FILE << "x._" << i++;
     else if (NeedBcast)
-      SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
+      // FIXME: Additional copy but avoid error when using multiple thread on
+      // the same worker node
+      SPARK_FILE << getSparkVarName(VD) << "_bcast.value.clone";
     else
       SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
@@ -548,7 +550,9 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     if (const CEANIndexExpr *Range = info.RangedVar[VD])
       SPARK_FILE << "x._" << i++;
     else if (NeedBcast)
-      SPARK_FILE << getSparkVarName(VD) << "_bcast.value";
+      // FIXME: Additional copy but avoid error when using multiple thread on
+      // the same worker node
+      SPARK_FILE << getSparkVarName(VD) << "_bcast.value.clone";
     else
       SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
