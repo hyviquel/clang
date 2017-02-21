@@ -546,10 +546,15 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
 
   SPARK_FILE << ")) }\n";
 
+  unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
+  if (NbOutputs > 1) {
+    SPARK_FILE << "    // cache not to perform the mapping for each output\n";
+    SPARK_FILE << "    mapres_" << MappingId << ".cache\n";
+  }
+
   SPARK_FILE << "    // 3 - Merge back the results\n";
 
   i = 0;
-  unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
 
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
@@ -621,7 +626,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     const CEANIndexExpr *Range = info.RangedVar[VD];
     unsigned OffloadType = TypeMap[VD];
 
-    if((OffloadType == OMP_TGT_MAPTYPE_ALLOC) && isLast)
+    if ((OffloadType == OMP_TGT_MAPTYPE_ALLOC) && isLast)
       continue;
 
     SPARK_FILE << "    ";
