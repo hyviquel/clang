@@ -1210,7 +1210,6 @@ public:
   void EmitOMPDeclareTarget(const OMPDeclareTargetDecl *D);
 
   struct OMPSparkMappingInfo {
-    llvm::SmallSet<const VarDecl*, 16> Inputs;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputOutputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> InputVarUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> OutputVarDef;
@@ -1218,7 +1217,6 @@ public:
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> RangedArrayAccess;
     llvm::DenseMap<const Expr *, llvm::Value *> RangeIndexes;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> CounterUse;
-    llvm::DenseMap<const VarDecl*, unsigned> InputStyle;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  CounterInfo;
     llvm::DenseMap<const VarDecl *, llvm::Value *> KernelArgVars;
     unsigned Identifier;

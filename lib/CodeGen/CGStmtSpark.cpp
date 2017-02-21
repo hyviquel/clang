@@ -328,7 +328,8 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "    var " << getSparkVarName(VD) << " = fs.read("
                  << OffloadId << ", sizeOf_" << getSparkVarName(VD) << ")\n";
 
-    } else if (OffloadType == OMP_TGT_MAPTYPE_FROM) {
+    } else if (OffloadType == OMP_TGT_MAPTYPE_FROM ||
+               OffloadType == OMP_TGT_MAPTYPE_ALLOC) {
       SPARK_FILE << "    var " << getSparkVarName(VD)
                  << " = new Array[Byte](sizeOf_" << getSparkVarName(VD)
                  << ")\n";
@@ -355,6 +356,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
                                        bool isLast) {
   bool verbose = VERBOSE;
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
+  auto &TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   unsigned MappingId = info.Identifier;
   SparkExprPrinter MappingPrinter(SPARK_FILE, getContext(), info, "x.toInt");
 
@@ -617,6 +619,10 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     const CEANIndexExpr *Range = info.RangedVar[VD];
+    unsigned OffloadType = TypeMap[VD];
+
+    if((OffloadType == OMP_TGT_MAPTYPE_ALLOC) && isLast)
+      continue;
 
     SPARK_FILE << "    ";
     if (Range)

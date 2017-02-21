@@ -487,12 +487,23 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
 /// records the count at statements where the value may change.
 class FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
 
+private:
+  ArraySubscriptExpr *CurrArrayExpr;
+  Expr *CurrArrayIndexExpr;
+
+  llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> MapVarToExpr;
+  llvm::SmallSet<const VarDecl*, 8> Inputs;
+  llvm::SmallSet<const VarDecl*, 8> Outputs;
+  llvm::SmallSet<const VarDecl*, 8> InputsOutputs;
+
+  enum UseKind { Use, Def, UseDef };
+
+  UseKind current_use;
+
 public:
   CodeGenModule &CGM;
   bool verbose;
 
-  ArraySubscriptExpr *CurrArrayExpr;
-  Expr *CurrArrayIndexExpr;
   llvm::SmallVector<VarDecl *, 8> LocalVars;
 
   CodeGenModule::OMPSparkMappingInfo *Info;
@@ -501,6 +512,28 @@ public:
       : CGM(CGM), Info(CGM.OpenMPSupport.getCurrentSparkMappingInfo()) {
     verbose = VERBOSE;
     CurrArrayExpr = NULL;
+    current_use = UseKind::UseDef;
+  }
+
+  void Explore(Stmt *S) {
+    TraverseStmt(S);
+
+    llvm::errs() << "Inputs =";
+    for(auto In : Inputs) {
+      Info->InputVarUse[In].append(MapVarToExpr[In].begin(), MapVarToExpr[In].end());
+      llvm::errs() << " " << In->getName();
+    }
+    llvm::errs() << "Outputs =";
+    for(auto Out : Outputs) {
+      Info->OutputVarDef[Out].append(MapVarToExpr[Out].begin(), MapVarToExpr[Out].end());
+      llvm::errs() << " " << Out->getName();
+    }
+    llvm::errs() << "InputsOutputs =";
+    for(auto InOut : InputsOutputs) {
+      Info->InputOutputVarUse[InOut].append(MapVarToExpr[InOut].begin(), MapVarToExpr[InOut].end());
+      llvm::errs() << " " << InOut->getName();
+    }
+
   }
 
   bool VisitOMPMapClause(const OMPMapClause *C) {
@@ -533,6 +566,8 @@ public:
       MapType = OMP_TGT_MAPTYPE_FROM;
       break;
     case OMPC_MAP_alloc:
+      MapType = OMP_TGT_MAPTYPE_ALLOC;
+      break;
     case OMPC_MAP_release:
     case OMPC_MAP_delete:
       llvm::errs() << " --> euuh something not supported\n";
@@ -570,12 +605,7 @@ public:
         Info->RangedVar[VD] = Range;
       }
 
-      const ValueDecl *VD = RefExpr->getDecl();
-
       assert(RefExpr && "Unexpected expression in the map clause");
-
-      VD->dump();
-      // CGM.OpenMPSupport.addOffloadingMapVariable(VD, MapType);
     }
 
     return true;
@@ -629,7 +659,7 @@ public:
 
     if (const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
       if (verbose)
-        llvm::errs() << ">>> Found use of Var = " << VD->getName() << " --> ";
+        llvm::errs() << ">>> Found RefExpr = " << VD->getName() << " --> ";
 
       if (Info->CounterInfo.find(VD) != Info->CounterInfo.end()) {
         Info->CounterUse[VD].push_back(D);
@@ -654,24 +684,43 @@ public:
         MapType = CGM.OpenMPSupport.getMapType(VD);
       }
 
-      if (MapType == OMP_TGT_MAPTYPE_TO) {
-        Info->InputVarUse[VD].push_back(D);
-        Info->Inputs.insert(VD);
-        Info->InputStyle[VD] = 1;
+      bool currInput = std::find(Inputs.begin(), Inputs.end(), VD) != Inputs.end();
+      bool currOutput = std::find(Outputs.begin(), Outputs.end(), VD) != Outputs.end();
+      bool currInputOutput = std::find(InputsOutputs.begin(), InputsOutputs.end(), VD) != InputsOutputs.end();
+
+      MapVarToExpr[VD].push_back(D);
+
+      if (current_use == Use) {
         if (verbose)
-          llvm::errs() << " is input";
-      } else if (MapType == OMP_TGT_MAPTYPE_FROM) {
-        Info->OutputVarDef[VD].push_back(D);
+          llvm::errs() << " is Use";
+        if (currInputOutput) {
+          ;
+        } else if (currOutput) {
+          Outputs.erase(VD);
+          InputsOutputs.insert(VD);
+        } else {
+          Inputs.insert(VD);
+        }
+      } else if (current_use == Def) {
         if (verbose)
-          llvm::errs() << " is output";
-      } else if (MapType == (OMP_TGT_MAPTYPE_TO | OMP_TGT_MAPTYPE_FROM)) {
-        Info->InputOutputVarUse[VD].push_back(D);
+          llvm::errs() << " is Def";
+        if (currInputOutput) {
+          ;
+        } else if (currInput) {
+          Inputs.erase(VD);
+          InputsOutputs.insert(VD);
+        } else {
+          Outputs.insert(VD);
+        }
+      } else if (current_use == UseDef) {
         if (verbose)
-          llvm::errs() << " is both input/output";
+          llvm::errs() << " is UseDef";
+        Inputs.erase(VD);
+        Outputs.erase(VD);
+        InputsOutputs.insert(VD);
       } else {
         if (verbose)
-          llvm::errs() << " is not supported\n";
-        exit(1);
+          llvm::errs() << " is Nothing ???";
       }
 
       // When variables are not fully broadcasted to the workers (internal
@@ -690,18 +739,106 @@ public:
     return true;
   }
 
+  // A workaround to allow a redefinition of Traverse...Operator.
+  bool TraverseStmt(Stmt *S) {
+    if (!S)
+      return true;
+
+    switch (S->getStmtClass()) {
+    case Stmt::CompoundAssignOperatorClass: {
+      CompoundAssignOperator *CAO = cast<CompoundAssignOperator>(S);
+      return TraverseCompoundAssignOperator(CAO);
+    }
+    case Stmt::UnaryOperatorClass:
+      return TraverseUnaryOperator(cast<UnaryOperator>(S));
+    case Stmt::BinaryOperatorClass:
+      return TraverseBinaryOperator(cast<BinaryOperator>(S));
+    default:
+      return RecursiveASTVisitor::TraverseStmt(S);
+    }
+  }
+
   bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
+    UseKind backup = current_use; // backup the usage
+
     CurrArrayExpr = A;
     CurrArrayIndexExpr = A->getIdx();
-
-    // Skip array indexes since the pointer will index directly the right
-    // element
     TraverseStmt(A->getBase());
+
     CurrArrayExpr = nullptr;
     CurrArrayIndexExpr = nullptr;
-
-    // FIXME: experiment without reordering
+    current_use = Use;
     TraverseStmt(A->getIdx());
+
+    current_use = backup; // write back the usage to the current usage
+    return true;
+  }
+
+  bool TraverseBinaryOperator(BinaryOperator *B) {
+    UseKind backup = current_use; // backup the usage
+    if (B->isAssignmentOp()) {
+      current_use = Use;
+      TraverseStmt(B->getRHS());
+      current_use = Def;
+      TraverseStmt(B->getLHS());
+    } else {
+      TraverseStmt(B->getLHS());
+      current_use = Use;
+      TraverseStmt(B->getRHS());
+    }
+    current_use = backup; // write back the usage to the current usage
+    return true;
+  }
+
+  bool TraverseCompoundAssignOperator(CompoundAssignOperator *B) {
+    UseKind backup = current_use; // backup the usage
+    current_use = Use;
+    TraverseStmt(B->getRHS());
+    current_use = UseDef;
+    TraverseStmt(B->getLHS());
+    current_use = backup; // write back the usage to the current usage
+    return true;
+  }
+
+  bool TraverseCallExpr(CallExpr *C) {
+    UseKind backup = current_use; // backup the usage
+    for (CallExpr::arg_iterator I = C->arg_begin(), E = C->arg_end(); I != E;
+         ++I) {
+      if ((*I)->getType()->isPointerType() ||
+          (*I)->getType()->isReferenceType())
+        current_use = Def;
+      TraverseStmt(*I);
+      current_use = backup;
+    }
+    return true;
+  }
+
+  bool TraverseUnaryOperator(UnaryOperator *U) {
+    UseKind backup = current_use; // backup the usage
+    switch (U->getOpcode()) {
+    case UO_PostInc:
+    case UO_PostDec:
+    case UO_PreInc:
+    case UO_PreDec:
+      current_use = UseDef;
+      break;
+    case UO_Plus:
+    case UO_Minus:
+    case UO_Not:
+    case UO_LNot:
+      current_use = Use;
+      break;
+    case UO_AddrOf:
+    case UO_Deref:
+      // use the current_use
+      break;
+    default:
+      // DEBUG("Operator " << UnaryOperator::getOpcodeStr(U->getOpcode()) <<
+      // " not supported in def-use analysis");
+      break;
+    }
+    TraverseStmt(U->getSubExpr());
+    current_use = backup; // write back the usage to the current usage
     return true;
   }
 };
@@ -1107,8 +1244,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Detect input/output expression from the loop body
   FindKernelArguments Finder(CGM);
-  // LoopStmt->dump();
-  Finder.TraverseStmt(LoopStmt);
+  LoopStmt->dump();
+  Finder.Explore(LoopStmt);
 
   // Get JNI type
   llvm::StructType *StructTy_JNINativeInterface =
