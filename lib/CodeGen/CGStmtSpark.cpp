@@ -608,8 +608,10 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     }
 
     if (NeedBcast && !isLast)
-      SPARK_FILE << getSparkVarName(VD) << "_bcast = info.sc.broadcast("
-                 << getSparkVarName(VD) << ")\n";
+      SPARK_FILE << "    " << getSparkVarName(VD) << "_bcast.destroy\n"
+                 << "    " << getSparkVarName(VD)
+                 << "_bcast = info.sc.broadcast(" << getSparkVarName(VD)
+                 << ")\n";
 
     i++;
   }
@@ -675,7 +677,8 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     }
 
     if (NeedBcast && !isLast)
-      SPARK_FILE << "    " << getSparkVarName(VD)
+      SPARK_FILE << "    " << getSparkVarName(VD) << "_bcast.destroy\n"
+                 << "    " << getSparkVarName(VD)
                  << "_bcast = info.sc.broadcast(" << getSparkVarName(VD)
                  << ")\n";
 
