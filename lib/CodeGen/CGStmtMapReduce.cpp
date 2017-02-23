@@ -523,16 +523,19 @@ public:
       Info->InputVarUse[In].append(MapVarToExpr[In].begin(), MapVarToExpr[In].end());
       llvm::errs() << " " << In->getName();
     }
+    llvm::errs() << "\n";
     llvm::errs() << "Outputs =";
     for(auto Out : Outputs) {
       Info->OutputVarDef[Out].append(MapVarToExpr[Out].begin(), MapVarToExpr[Out].end());
       llvm::errs() << " " << Out->getName();
     }
+    llvm::errs() << "\n";
     llvm::errs() << "InputsOutputs =";
     for(auto InOut : InputsOutputs) {
       Info->InputOutputVarUse[InOut].append(MapVarToExpr[InOut].begin(), MapVarToExpr[InOut].end());
       llvm::errs() << " " << InOut->getName();
     }
+    llvm::errs() << "\n";
 
   }
 
@@ -1244,7 +1247,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   // Detect input/output expression from the loop body
   FindKernelArguments Finder(CGM);
-  LoopStmt->dump();
+  //LoopStmt->dump();
   Finder.Explore(LoopStmt);
 
   // Get JNI type

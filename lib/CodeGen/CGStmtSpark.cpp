@@ -114,11 +114,6 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
         info.OutputVarDef.size() + info.InputOutputVarUse.size();
     unsigned NbOutputSize = info.OutputVarDef.size();
 
-    if (verbose)
-      llvm::errs() << "NbInput => " << NbInputs << "\n";
-    if (verbose)
-      llvm::errs() << "NbOutput => " << NbOutputs << "\n";
-
     SPARK_FILE << "  @native def mappingMethod" << info.Identifier << "(";
     i = 0;
     for (auto it = info.CounterUse.begin(); it != info.CounterUse.end();
