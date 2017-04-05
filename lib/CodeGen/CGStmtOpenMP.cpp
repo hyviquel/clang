@@ -1302,7 +1302,6 @@ CodeGenFunction::EmitOMPDirectiveWithLoop(OpenMPDirectiveKind DKind,
       // FIXME: Dirty tricks ;-)
       CGM.OpenMPSupport.syncStack();
       GenerateMappingKernel(S);
-      //EmitSparkJob();
       CGM.OpenMPSupport.backupMapping();
     } else {
       // CodeGen for clauses (call start).
