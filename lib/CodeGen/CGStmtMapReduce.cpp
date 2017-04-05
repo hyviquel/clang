@@ -1402,10 +1402,13 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       CGF.Builder.CreateLoad(ptr_gep_newobject, false);
 
   // Keep values that have to be used for releasing.
-  llvm::SmallVector<llvm::Value *, 8> VecPtrBarrays;
-  llvm::SmallVector<llvm::Value *, 8> VecPtrValues;
-  llvm::SmallVector<llvm::Value *, 8> VecPtrBarraysElem;
-  llvm::SmallVector<llvm::Value *, 8> VecPtrValuesElem;
+  llvm::SmallVector<std::pair<llvm::Value *, llvm::Value *>, 8> InputsToRelease;
+  llvm::SmallVector<std::pair<llvm::Value *, llvm::Value *>, 8>
+      ScalarInputsToRelease;
+  llvm::SmallVector<std::pair<llvm::Value *, llvm::Value *>, 8>
+      InOutputsToRelease;
+  llvm::SmallVector<std::pair<llvm::Value *, llvm::Value *>, 8>
+      OutputsToRelease;
 
   llvm::Value *alloca_cnt;
   llvm::Value *alloca_cnt_bound;
@@ -1420,12 +1423,15 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     const VarDecl *VD = it->first;
 
     // FIXME: What about long ??
+    // Store current value of the loop counter
     alloca_cnt = CGF.Builder.CreateAlloca(IntTy_jint);
     llvm::Value *cast_cnt = CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
     CGF.Builder.CreateStore(cast_cnt, alloca_cnt);
 
     args++;
 
+    // Store the bound of the inner tiled loop according to the current
+    // iteration
     alloca_cnt_bound = CGF.Builder.CreateAlloca(IntTy_jint);
     llvm::Value *cast_cnt_bound =
         CGF.Builder.CreateTruncOrBitCast(args, IntTy_jint);
@@ -1439,6 +1445,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   // Allocate, load and cast input variables (i.e. the arguments)
   for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
+    args->setName(VD->getName());
 
     QualType varType = VD->getType();
     llvm::Value *valuePtr;
@@ -1451,13 +1458,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       ptr_load_arg_params.push_back(const_ptr_null);
       llvm::CallInst *ptr_load_arg =
           CGF.Builder.CreateCall(ptr_fn_getelement, ptr_load_arg_params);
-      ptr_load_arg->setCallingConv(llvm::CallingConv::C);
-      ptr_load_arg->setTailCall(false);
 
-      args->setName(VD->getName());
-
-      VecPtrBarraysElem.push_back(args);
-      VecPtrValuesElem.push_back(ptr_load_arg);
+      ScalarInputsToRelease.push_back(std::make_pair(args, ptr_load_arg));
 
       llvm::Type *TyObject_arg = ConvertType(varType);
 
@@ -1473,13 +1475,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       ptr_load_arg_params.push_back(const_ptr_null);
       llvm::CallInst *ptr_load_arg =
           CGF.Builder.CreateCall(ptr_fn_getcritical, ptr_load_arg_params);
-      ptr_load_arg->setCallingConv(llvm::CallingConv::C);
-      ptr_load_arg->setTailCall(false);
 
-      args->setName(VD->getName());
-
-      VecPtrBarrays.push_back(args);
-      VecPtrValues.push_back(ptr_load_arg);
+      InputsToRelease.push_back(std::make_pair(args, ptr_load_arg));
 
       llvm::Type *TyObject_arg = ConvertType(varType);
 
@@ -1502,10 +1499,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
   }
 
-  // Keep values that have to be used for releasing.
-  llvm::SmallVector<llvm::Value *, 8> VecInOutBarrays;
-  llvm::SmallVector<llvm::Value *, 8> VecInOutValues;
-
   // Allocate, load and cast input/output variables (i.e. the arguments)
   for (auto it = info.InputOutputVarUse.begin();
        it != info.InputOutputVarUse.end(); ++it) {
@@ -1518,13 +1511,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_load_arg_params.push_back(const_ptr_null);
     llvm::CallInst *ptr_load_arg =
         CGF.Builder.CreateCall(ptr_fn_getcritical, ptr_load_arg_params);
-    ptr_load_arg->setCallingConv(llvm::CallingConv::C);
-    ptr_load_arg->setTailCall(false);
 
     args->setName(VD->getName());
 
-    VecInOutBarrays.push_back(args);
-    VecInOutValues.push_back(ptr_load_arg);
+    InOutputsToRelease.push_back(std::make_pair(args, ptr_load_arg));
 
     QualType varType = VD->getType();
     llvm::Type *TyObject_arg = ConvertType(varType);
@@ -1535,9 +1525,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       if (verbose)
         llvm::errs() << ">Test< " << VD->getName() << " is scalar\n";
 
-      llvm::PointerType *PointerTy_arg =
-          llvm::PointerType::get(TyObject_arg, 0);
-      valuePtr = CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
+      valuePtr = CGF.Builder.CreateBitCast(
+          ptr_load_arg, llvm::PointerType::get(TyObject_arg, 0));
 
     } else {
       llvm::Value *ptr_casted_arg =
@@ -1559,10 +1548,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     args++;
   }
 
-  // Keep values that have to be used for releasing.
-  llvm::SmallVector<llvm::Value *, 8> VecOutBarrays;
-  llvm::SmallVector<llvm::Value *, 8> VecOutValues;
-
   // Allocate output variables
   for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
        ++it) {
@@ -1575,13 +1560,10 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     ptr_load_arg_params.push_back(const_ptr_null);
     llvm::CallInst *ptr_load_arg =
         CGF.Builder.CreateCall(ptr_fn_getcritical, ptr_load_arg_params);
-    ptr_load_arg->setCallingConv(llvm::CallingConv::C);
-    ptr_load_arg->setTailCall(false);
 
     args->setName(VD->getName());
 
-    VecOutBarrays.push_back(args);
-    VecOutValues.push_back(ptr_load_arg);
+    OutputsToRelease.push_back(std::make_pair(args, ptr_load_arg));
 
     QualType varType = VD->getType();
     llvm::Type *TyObject_arg = ConvertType(varType);
@@ -1714,75 +1696,59 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   // Emit the fall-through block.
   CGF.EmitBlock(LoopExit.getBlock(), true);
 
-  auto ptrValue = VecPtrValues.begin();
-
-  for (auto ptrBarray = VecPtrBarrays.begin(); ptrBarray != VecPtrBarrays.end();
-       ++ptrBarray) {
+  for (auto it = InputsToRelease.begin(); it != InputsToRelease.end(); ++it) {
     // ReleaseCritical
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
-    params_release.push_back(*ptrBarray);
-    params_release.push_back(*ptrValue);
+    params_release.push_back(it->first);
+    params_release.push_back(it->second);
     params_release.push_back(const_int32_2);
     CGF.Builder.CreateCall(ptr_fn_releasecritical, params_release);
-
-    ptrValue++;
   }
 
-  ptrValue = VecPtrValuesElem.begin();
-
-  for (auto ptrBarray = VecPtrBarraysElem.begin();
-       ptrBarray != VecPtrBarraysElem.end(); ++ptrBarray) {
+  for (auto it = ScalarInputsToRelease.begin();
+       it != ScalarInputsToRelease.end(); ++it) {
     // ReleaseByteArrayElements
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
-    params_release.push_back(*ptrBarray);
-    params_release.push_back(*ptrValue);
+    params_release.push_back(it->first);
+    params_release.push_back(it->second);
     params_release.push_back(const_int32_2);
     CGF.Builder.CreateCall(ptr_fn_releaseelement, params_release);
-
-    ptrValue++;
   }
 
-  llvm::SmallVector<llvm::Value *, 8> results;
+  llvm::SmallVector<llvm::Value *, 8> OutputsToReturn;
 
-  auto InOutValues = VecInOutValues.begin();
-
-  for (auto inOutBarrays = VecInOutBarrays.begin();
-       inOutBarrays != VecInOutBarrays.end(); ++inOutBarrays) {
+  for (auto it = InOutputsToRelease.begin(); it != InOutputsToRelease.end();
+       ++it) {
     // ReleaseCritical
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
-    params_release.push_back(*inOutBarrays);
-    params_release.push_back(*InOutValues);
+    params_release.push_back(it->first);
+    params_release.push_back(it->second);
     params_release.push_back(const_int32_0);
     CGF.Builder.CreateCall(ptr_fn_releasecritical, params_release);
 
-    results.push_back(*inOutBarrays);
-    InOutValues++;
+    OutputsToReturn.push_back(it->first);
   }
 
-  auto OutValues = VecOutValues.begin();
-
-  for (auto outBarrays = VecOutBarrays.begin();
-       outBarrays != VecOutBarrays.end(); ++outBarrays) {
+  for (auto it = OutputsToRelease.begin(); it != OutputsToRelease.end(); ++it) {
     // ReleaseByteArrayElements
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
-    params_release.push_back(*outBarrays);
-    params_release.push_back(*OutValues);
+    params_release.push_back(it->first);
+    params_release.push_back(it->second);
     params_release.push_back(const_int32_0);
     CGF.Builder.CreateCall(ptr_fn_releasecritical, params_release);
 
-    results.push_back(*outBarrays);
-    OutValues++;
+    OutputsToReturn.push_back(it->first);
   }
 
   unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
 
   if (NbOutputs == 1) {
     // Just return the value
-    CGF.Builder.CreateRet(results.front());
+    CGF.Builder.CreateRet(OutputsToReturn.front());
   } else if (NbOutputs == 2) {
     // Construct and return a Tuple2
     std::vector<llvm::Value *> params_findclass;
@@ -1803,8 +1769,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     params_newobject.push_back(ptr_env);
     params_newobject.push_back(ptr_class_tuple2);
     params_newobject.push_back(ptr_new_tuple2);
-    params_newobject.push_back(results[0]);
-    params_newobject.push_back(results[1]);
+    params_newobject.push_back(OutputsToReturn[0]);
+    params_newobject.push_back(OutputsToReturn[1]);
     llvm::CallInst *ptr_tuple2 =
         CGF.Builder.CreateCall(ptr_fn_newobject, params_newobject);
 
@@ -1829,9 +1795,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     params_newobject.push_back(ptr_env);
     params_newobject.push_back(ptr_class_tuple3);
     params_newobject.push_back(ptr_new_tuple3);
-    params_newobject.push_back(results[0]);
-    params_newobject.push_back(results[1]);
-    params_newobject.push_back(results[2]);
+    params_newobject.push_back(OutputsToReturn[0]);
+    params_newobject.push_back(OutputsToReturn[1]);
+    params_newobject.push_back(OutputsToReturn[2]);
     llvm::CallInst *ptr_tuple3 =
         CGF.Builder.CreateCall(ptr_fn_newobject, params_newobject);
 
