@@ -1539,13 +1539,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
           llvm::PointerType::get(TyObject_arg, 0);
       valuePtr = CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
 
-      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
-        llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-        for (auto it = info.RangedArrayAccess[VD].begin();
-             it != info.RangedArrayAccess[VD].end(); ++it)
-          CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-      }
-
     } else {
       llvm::Value *ptr_casted_arg =
           CGF.Builder.CreateBitCast(ptr_load_arg, TyObject_arg);
@@ -1602,13 +1595,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       llvm::PointerType *PointerTy_arg =
           llvm::PointerType::get(TyObject_arg, 0);
       valuePtr = CGF.Builder.CreateBitCast(ptr_load_arg, PointerTy_arg);
-
-      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
-        llvm::Value *LowerBound = CGF.EmitScalarExpr(Range->getLowerBound());
-        for (auto it = info.RangedArrayAccess[VD].begin();
-             it != info.RangedArrayAccess[VD].end(); ++it)
-          CGM.OpenMPSupport.addOpenMPKernelArgRange(*it, LowerBound);
-      }
 
     } else {
       llvm::Value *ptr_casted_arg =
