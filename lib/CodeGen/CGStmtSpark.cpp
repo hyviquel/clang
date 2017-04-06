@@ -107,12 +107,9 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   SPARK_FILE << "class OmpKernel {\n";
 
   for (auto it = mappingFunctions.begin(); it != mappingFunctions.end(); it++) {
-    auto &info = **it;
+    CodeGenModule::OMPSparkMappingInfo &info = **it;
 
-    unsigned NbInputs = info.InputVarUse.size() + info.InputOutputVarUse.size();
-    unsigned NbOutputs =
-        info.OutputVarDef.size() + info.InputOutputVarUse.size();
-    unsigned NbOutputSize = info.OutputVarDef.size();
+    unsigned NbOutputs = info.OutVarDef.size() + info.InOutVarUse.size();
 
     SPARK_FILE << "  @native def mappingMethod" << info.Identifier << "(";
     i = 0;
@@ -125,19 +122,19 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "index" << i << ": Long, bound" << i << ": Long";
     }
     i = 0;
-    for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end();
+    for (auto it = info.InVarUse.begin(); it != info.InVarUse.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (auto it = info.InputOutputVarUse.begin();
-         it != info.InputOutputVarUse.end(); ++it, i++) {
+    for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end();
+         ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+    for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
@@ -164,19 +161,19 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "index" << i << ": Long, bound" << i << ": Long";
     }
     i = 0;
-    for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end();
+    for (auto it = info.InVarUse.begin(); it != info.InVarUse.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (auto it = info.InputOutputVarUse.begin();
-         it != info.InputOutputVarUse.end(); ++it, i++) {
+    for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end();
+         ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i << ": Array[Byte]";
     }
-    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+    for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
@@ -204,19 +201,19 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
       SPARK_FILE << "index" << i << ", bound" << i;
     }
     i = 0;
-    for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end();
+    for (auto it = info.InVarUse.begin(); it != info.InVarUse.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i;
     }
-    for (auto it = info.InputOutputVarUse.begin();
-         it != info.InputOutputVarUse.end(); ++it, i++) {
+    for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end();
+         ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
       SPARK_FILE << "n" << i;
     }
-    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
+    for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end();
          ++it, i++) {
       // Separator
       SPARK_FILE << ", ";
@@ -355,10 +352,6 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
   unsigned MappingId = info.Identifier;
   SparkExprPrinter MappingPrinter(SPARK_FILE, getContext(), info, "x.toInt");
 
-  unsigned NbInputs = 0;
-  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
-    NbInputs += it->second.size();
-
   SPARK_FILE << "    // omp parallel for\n";
 
   SPARK_FILE << "    // 1 - Generate RDDs of index\n";
@@ -401,14 +394,13 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
 
   // We need to explicitly create Tuple1 if there is no ranged input.
   int NumberOfRangedInput = 0;
-  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it)
+  for (auto it = info.InVarUse.begin(); it != info.InVarUse.end(); ++it)
     if (const CEANIndexExpr *Range = info.RangedVar[it->first])
       NumberOfRangedInput++;
-  for (auto it = info.InputOutputVarUse.begin();
-       it != info.InputOutputVarUse.end(); ++it)
+  for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end(); ++it)
     if (const CEANIndexExpr *Range = info.RangedVar[it->first])
       NumberOfRangedInput++;
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end(); ++it)
+  for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it)
     if (const CEANIndexExpr *Range = info.RangedVar[it->first])
       NumberOfRangedInput++;
 
@@ -429,7 +421,21 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     SPARK_FILE << "Tuple1(x)";
   } else {
     SPARK_FILE << "(x";
-    for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end();
+    for (auto it = info.InVarUse.begin(); it != info.InVarUse.end(); ++it) {
+      const VarDecl *VD = it->first;
+      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
+        // Separator
+        SPARK_FILE << ", ";
+        SPARK_FILE << getSparkVarName(VD);
+        SPARK_FILE << ".slice((";
+        InputStartRangePrinter.PrintExpr(Range->getLowerBound());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
+        InputEndRangePrinter.PrintExpr(Range->getLength());
+        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
+                   << getSparkVarName(VD) << "))";
+      }
+    }
+    for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end();
          ++it) {
       const VarDecl *VD = it->first;
       if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
@@ -444,23 +450,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
                    << getSparkVarName(VD) << "))";
       }
     }
-    for (auto it = info.InputOutputVarUse.begin();
-         it != info.InputOutputVarUse.end(); ++it) {
-      const VarDecl *VD = it->first;
-      if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
-        // Separator
-        SPARK_FILE << ", ";
-        SPARK_FILE << getSparkVarName(VD);
-        SPARK_FILE << ".slice((";
-        InputStartRangePrinter.PrintExpr(Range->getLowerBound());
-        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", Math.min((";
-        InputEndRangePrinter.PrintExpr(Range->getLength());
-        SPARK_FILE << ") * eltSizeOf_" << getSparkVarName(VD) << ", sizeOf_"
-                   << getSparkVarName(VD) << "))";
-      }
-    }
-    for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-         ++it) {
+    for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it) {
       const VarDecl *VD = it->first;
       if (const CEANIndexExpr *Range = info.RangedVar[VD]) {
         // Separator
@@ -496,7 +486,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     i++;
   }
 
-  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
+  for (auto it = info.InVarUse.begin(); it != info.InVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     // Separator
@@ -508,8 +498,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     else
       SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
-  for (auto it = info.InputOutputVarUse.begin();
-       it != info.InputOutputVarUse.end(); ++it) {
+  for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     // Separator
@@ -523,8 +512,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     else
       SPARK_FILE << getSparkVarName(VD) << ".clone";
   }
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-       ++it) {
+  for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     // Separator
@@ -541,7 +529,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
 
   SPARK_FILE << ")) }\n";
 
-  unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
+  unsigned NbOutputs = info.OutVarDef.size() + info.InOutVarUse.size();
   if (NbOutputs > 1) {
     SPARK_FILE << "    // cache not to perform the mapping for each output\n";
     SPARK_FILE << "    mapres_" << MappingId << ".cache\n";
@@ -551,8 +539,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
 
   i = 0;
 
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-       ++it) {
+  for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     const CEANIndexExpr *Range = info.RangedVar[VD];
@@ -616,8 +603,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     i++;
   }
 
-  for (auto it = info.InputOutputVarUse.begin();
-       it != info.InputOutputVarUse.end(); ++it) {
+  for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     bool NeedBcast = VD->getType()->isAnyPointerType();
     const CEANIndexExpr *Range = info.RangedVar[VD];

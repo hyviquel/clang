@@ -5109,6 +5109,7 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
   if(isSparkTarget) {
     // for spark, we do not need to run the reduction
     GenerateReductionKernel(C, S);
+    llvm::errs() << "Generate reduction function.";
     return;
   }
 

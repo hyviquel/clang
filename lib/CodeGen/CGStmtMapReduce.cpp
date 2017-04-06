@@ -521,22 +521,22 @@ public:
 
     llvm::errs() << "Inputs =";
     for (auto In : Inputs) {
-      Info->InputVarUse[In].append(MapVarToExpr[In].begin(),
-                                   MapVarToExpr[In].end());
+      Info->InVarUse[In].append(MapVarToExpr[In].begin(),
+                                MapVarToExpr[In].end());
       llvm::errs() << " " << In->getName();
     }
     llvm::errs() << "\n";
     llvm::errs() << "Outputs =";
     for (auto Out : Outputs) {
-      Info->OutputVarDef[Out].append(MapVarToExpr[Out].begin(),
-                                     MapVarToExpr[Out].end());
+      Info->OutVarDef[Out].append(MapVarToExpr[Out].begin(),
+                                  MapVarToExpr[Out].end());
       llvm::errs() << " " << Out->getName();
     }
     llvm::errs() << "\n";
     llvm::errs() << "InputsOutputs =";
     for (auto InOut : InputsOutputs) {
-      Info->InputOutputVarUse[InOut].append(MapVarToExpr[InOut].begin(),
-                                            MapVarToExpr[InOut].end());
+      Info->InOutVarUse[InOut].append(MapVarToExpr[InOut].begin(),
+                                      MapVarToExpr[InOut].end());
       llvm::errs() << " " << InOut->getName();
     }
     llvm::errs() << "\n";
@@ -1281,17 +1281,15 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     FuncTy_args.push_back(IntTy_jlong);
   }
 
-  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
+  for (auto it = info.InVarUse.begin(); it != info.InVarUse.end(); ++it) {
     FuncTy_args.push_back(PointerTy_jobject);
   }
 
-  for (auto it = info.InputOutputVarUse.begin();
-       it != info.InputOutputVarUse.end(); ++it) {
+  for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end(); ++it) {
     FuncTy_args.push_back(PointerTy_jobject);
   }
 
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-       ++it) {
+  for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it) {
     FuncTy_args.push_back(PointerTy_jobject);
   }
 
@@ -1443,7 +1441,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Allocate, load and cast input variables (i.e. the arguments)
-  for (auto it = info.InputVarUse.begin(); it != info.InputVarUse.end(); ++it) {
+  for (auto it = info.InVarUse.begin(); it != info.InVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
     args->setName(VD->getName());
 
@@ -1500,8 +1498,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Allocate, load and cast input/output variables (i.e. the arguments)
-  for (auto it = info.InputOutputVarUse.begin();
-       it != info.InputOutputVarUse.end(); ++it) {
+  for (auto it = info.InOutVarUse.begin(); it != info.InOutVarUse.end(); ++it) {
     const VarDecl *VD = it->first;
 
     // GetPrimitiveArrayCritical
@@ -1549,8 +1546,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   }
 
   // Allocate output variables
-  for (auto it = info.OutputVarDef.begin(); it != info.OutputVarDef.end();
-       ++it) {
+  for (auto it = info.OutVarDef.begin(); it != info.OutVarDef.end(); ++it) {
     const VarDecl *VD = it->first;
 
     // GetPrimitiveArrayCritical
@@ -1744,7 +1740,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     OutputsToReturn.push_back(it->first);
   }
 
-  unsigned NbOutputs = info.OutputVarDef.size() + info.InputOutputVarUse.size();
+  unsigned NbOutputs = info.OutVarDef.size() + info.InOutVarUse.size();
 
   if (NbOutputs == 1) {
     // Just return the value
