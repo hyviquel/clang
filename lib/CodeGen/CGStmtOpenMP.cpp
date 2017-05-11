@@ -5107,9 +5107,8 @@ CodeGenFunction::EmitInitOMPReductionClause(const OMPReductionClause &C,
   bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
+    llvm::errs() << "EmitInitOMPReductionClause\n";
     // for spark, we do not need to run the reduction
-    GenerateReductionKernel(C, S);
-    llvm::errs() << "Generate reduction function.";
     return;
   }
 
@@ -5161,6 +5160,7 @@ CodeGenFunction::EmitPreOMPReductionClause(const OMPReductionClause &C,
   bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
+    llvm::errs() << "EmitPreOMPReductionClause\n";
     // for spark, we do not need to run the reduction
     return;
   }
@@ -5455,6 +5455,7 @@ CodeGenFunction::EmitPostOMPReductionClause(const OMPReductionClause &C,
   bool isSparkTarget = CGM.getLangOpts().OpenMPTargetMode &&
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
+    llvm::errs() << "EmitPostOMPReductionClause\n";
     // for spark, we do not need to run the reduction
     return;
   }
@@ -6347,6 +6348,7 @@ CodeGenFunction::EmitCloseOMPReductionClause(const OMPReductionClause &C,
       CGM.getTarget().getTriple().getEnvironment() == llvm::Triple::Spark;
   if(isSparkTarget) {
     // for spark, we do not need to run the reduction
+    llvm::errs() << "EmitCloseOMPReductionClause\n";
     return;
   }
 

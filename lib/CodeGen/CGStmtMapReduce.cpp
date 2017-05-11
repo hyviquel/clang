@@ -857,10 +857,10 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
                                               const OMPExecutableDirective &S) {
   bool verbose = VERBOSE;
 
-  DefineJNITypes();
-
   // Create the mapping function
   llvm::Module *mod = &(CGM.getModule());
+
+  auto &info = *CGM.OpenMPSupport.getCurrentSparkMappingInfo();
 
   // Get JNI type
   llvm::StructType *StructTy_JNINativeInterface =
@@ -896,8 +896,11 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
         /*Params=*/FuncTy_args,
         /*isVarArg=*/false);
 
-    llvm::StringRef RedFnName = llvm::StringRef(
-        "Java_org_llvm_openmp_OmpKernel_reduceMethod" + VD->getNameAsString());
+    std::string RedFnName = "Java_org_llvm_openmp_OmpKernel_reduceMethod" +
+                            VD->getNameAsString() +
+                            std::to_string(info.Identifier);
+
+    llvm::errs() << RedFnName << "\n";
 
     llvm::Function *RedFn = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, RedFnName, mod);
@@ -913,48 +916,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     llvm::PointerType *PointerTy_190 =
         llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
-    llvm::ArrayType *ArrayTy_0 =
-        llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 13);
-    llvm::ArrayType *ArrayTy_2 =
-        llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 7);
-    llvm::ArrayType *ArrayTy_4 =
-        llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 40);
-    llvm::ArrayType *ArrayTy_42 =
-        llvm::ArrayType::get(llvm::IntegerType::get(mod->getContext(), 8), 58);
-
-    // Global variable
-    llvm::GlobalVariable *gvar_array__str = new llvm::GlobalVariable(
-        /*Module=*/*mod,
-        /*Type=*/ArrayTy_0,
-        /*isConstant=*/true,
-        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-        /*Initializer=*/0,
-        /*Name=*/".str");
-
-    llvm::GlobalVariable *gvar_array__str_1 = new llvm::GlobalVariable(
-        /*Module=*/*mod,
-        /*Type=*/ArrayTy_2,
-        /*isConstant=*/true,
-        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-        /*Initializer=*/0,
-        /*Name=*/".str.1");
-
-    llvm::GlobalVariable *gvar_array__str_2 = new llvm::GlobalVariable(
-        /*Module=*/*mod,
-        /*Type=*/ArrayTy_4,
-        /*isConstant=*/true,
-        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-        /*Initializer=*/0,
-        /*Name=*/".str.2");
-
-    llvm::GlobalVariable *gvar_array__str_22 = new llvm::GlobalVariable(
-        /*Module=*/*mod,
-        /*Type=*/ArrayTy_42,
-        /*isConstant=*/true,
-        /*Linkage=*/llvm::GlobalValue::PrivateLinkage,
-        /*Initializer=*/0,
-        /*Name=*/".str.22");
-
     // Generate useful type and constant
     llvm::ConstantInt *const_int32_0 = llvm::ConstantInt::get(
         getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
@@ -963,28 +924,12 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     llvm::ConstantInt *const_int32_4 = llvm::ConstantInt::get(
         mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
 
-    llvm::Constant *const_array_262 = llvm::ConstantDataArray::getString(
-        mod->getContext(), "scala/Tuple2", true);
-    llvm::Constant *const_array_263 =
-        llvm::ConstantDataArray::getString(mod->getContext(), "<init>", true);
-    llvm::Constant *const_array_264 = llvm::ConstantDataArray::getString(
-        mod->getContext(), "(Ljava/lang/Object;Ljava/lang/Object;)V", true);
-    llvm::Constant *const_array_264_2 = llvm::ConstantDataArray::getString(
-        mod->getContext(),
-        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", true);
-
     llvm::ConstantPointerNull *const_ptr_256 =
         llvm::ConstantPointerNull::get(PointerTy_4);
 
     std::vector<llvm::Constant *> const_ptr_277_indices;
     const_ptr_277_indices.push_back(const_int64_0);
     const_ptr_277_indices.push_back(const_int64_0);
-
-    // Init global variables
-    gvar_array__str->setInitializer(const_array_262);
-    gvar_array__str_1->setInitializer(const_array_263);
-    gvar_array__str_2->setInitializer(const_array_264);
-    gvar_array__str_22->setInitializer(const_array_264_2);
 
     // Allocate and load compulsry JNI arguments
     llvm::Function::arg_iterator args = RedFn->arg_begin();
@@ -1015,8 +960,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     ptr_275_params.push_back(ptr_274);
     ptr_275_params.push_back(const_ptr_256);
     llvm::CallInst *ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
-    ptr_275->setCallingConv(llvm::CallingConv::C);
-    ptr_275->setTailCall(false);
 
     llvm::Value *ptr_265 = CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
     llvm::Value *ptr_265_3 = CGF.Builder.CreateLoad(ptr_265);
@@ -1043,8 +986,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     ptr_275_1_params.push_back(const_ptr_256);
     llvm::CallInst *ptr_275_1 =
         CGF.Builder.CreateCall(ptr_272_2, ptr_275_1_params);
-    ptr_275_1->setCallingConv(llvm::CallingConv::C);
-    ptr_275_1->setTailCall(false);
 
     llvm::Value *ptr_265_1 =
         CGF.Builder.CreateBitCast(ptr_275_1, PointerTy_190);
@@ -1117,8 +1058,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
       void_272_params.push_back(const_int32_0);
       llvm::CallInst *void_272 =
           CGF.Builder.CreateCall(ptr_271, void_272_params);
-      void_272->setCallingConv(llvm::CallingConv::C);
-      void_272->setTailCall(true);
     }
 
     // Protect arg 2
@@ -1136,8 +1075,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
       void_272_params.push_back(const_int32_0);
       llvm::CallInst *void_272 =
           CGF.Builder.CreateCall(ptr_271, void_272_params);
-      void_272->setCallingConv(llvm::CallingConv::C);
-      void_272->setTailCall(true);
     }
 
     // Cast back the result to bit array
@@ -1150,8 +1087,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     ptr_277_params.push_back(
         const_int32_4); // FIXME: That should the size in byte of the element
     llvm::CallInst *ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
-    ptr_277->setCallingConv(llvm::CallingConv::C);
-    ptr_277->setTailCall(true);
 
     llvm::LoadInst *ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
     llvm::Value *ptr_279 =
@@ -1167,8 +1102,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
         const_int32_4); // FIXME: That should the size in byte of the element
     void_281_params.push_back(ptr_res_cast);
     llvm::CallInst *void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
-    void_281->setCallingConv(llvm::CallingConv::C);
-    void_281->setTailCall(false);
 
     CGF.Builder.CreateRet(ptr_277);
   }
@@ -1181,6 +1114,12 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
       cast<OMPParallelForDirective>(S);
 
   DefineJNITypes();
+
+  for (ArrayRef<OMPClause *>::const_iterator I = S.clauses().begin(),
+                                             E = S.clauses().end();
+       I != E; ++I)
+    if (*I && (*I)->getClauseKind() == OMPC_reduction)
+      GenerateReductionKernel(cast<OMPReductionClause>(*(*I)), S);
 
   auto &typeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
   auto &indexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();

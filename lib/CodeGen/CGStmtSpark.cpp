@@ -98,7 +98,6 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
   bool verbose = VERBOSE;
 
   auto &mappingFunctions = CGM.OpenMPSupport.getSparkMappingFunctions();
-  auto &ReductionMap = CGM.OpenMPSupport.getReductionMap();
 
   int i;
 
@@ -222,10 +221,19 @@ void CodeGenFunction::EmitSparkNativeKernel(llvm::raw_fd_ostream &SPARK_FILE) {
     SPARK_FILE << ")\n";
     SPARK_FILE << "  }\n\n";
 
-    for (auto it = ReductionMap.begin(); it != ReductionMap.end(); ++it) {
-      SPARK_FILE << "  @native def reduceMethod" << it->first->getName() << "_"
+    for (auto it = info.ReducedVar.begin(); it != info.ReducedVar.end(); ++it) {
+      SPARK_FILE << "  @native def reduceMethod" << (*it)->getName()
                  << info.Identifier
                  << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]\n\n";
+    }
+    for (auto it = info.ReducedVar.begin(); it != info.ReducedVar.end(); ++it) {
+      SPARK_FILE << "  def reduce" << (*it)->getName() << info.Identifier
+                 << "(n0 : Array[Byte], n1 : Array[Byte]) : Array[Byte]";
+      SPARK_FILE << " = {\n";
+      SPARK_FILE << "    NativeKernels.loadOnce()\n";
+      SPARK_FILE << "    return reduceMethod" << (*it)->getName()
+                 << info.Identifier << "(n0, n1)\n";
+      SPARK_FILE << "  }\n\n";
     }
   }
   SPARK_FILE << "}\n\n";
@@ -562,10 +570,11 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
       // More than 3 outputs -> extract each variable from the Collection
       SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
-    if (CGM.OpenMPSupport.isReduced(VD))
+    if (std::find(info.ReducedVar.begin(), info.ReducedVar.end(), VD) !=
+        info.ReducedVar.end())
       SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => new "
-                    "OmpKernel().reduceMethod"
-                 << VD->getName() << "(x, y)}";
+                    "OmpKernel().reduce"
+                 << VD->getName() << MappingId << "(x, y)}";
     else if (Range)
       SPARK_FILE << ".collect()";
     else
@@ -630,11 +639,12 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
       // More than 3 outputs -> extract each variable from the Collection
       SPARK_FILE << ".map{ x => (x._1, x._2(" << i << ")) }";
     }
-    if (CGM.OpenMPSupport.isReduced(VD))
+    if (std::find(info.ReducedVar.begin(), info.ReducedVar.end(), VD) !=
+        info.ReducedVar.end())
       SPARK_FILE << ".map{ x => x._2 }.reduce{(x, y) => new "
-                    "OmpKernel().reduceMethod"
-                 << VD->getName() << "(x, y)}";
-    if (Range)
+                    "OmpKernel().reduce"
+                 << VD->getName() << MappingId << "(x, y)}";
+    else if (Range)
       SPARK_FILE << ".collect()";
     else
       SPARK_FILE << ".map{ x => x._2 "

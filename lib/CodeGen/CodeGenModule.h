@@ -1216,6 +1216,7 @@ public:
     llvm::DenseMap<const VarDecl*, const CEANIndexExpr*> RangedVar;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> RangedArrayAccess;
     llvm::DenseMap<const Expr *, llvm::Value *> RangeIndexes;
+    llvm::SmallVector<const VarDecl*, 8> ReducedVar;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr*, 8>> CounterUse;
     llvm::DenseMap<const VarDecl*, llvm::SmallVector<const Expr *, 4>>  CounterInfo;
     llvm::DenseMap<const VarDecl *, llvm::Value *> KernelArgVars;
