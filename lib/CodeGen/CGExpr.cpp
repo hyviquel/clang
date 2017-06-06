@@ -1411,18 +1411,18 @@ llvm::Value *CodeGenFunction::EmitExtVectorElementLValue(LValue LV) {
   QualType EQT = ExprVT->getElementType();
   llvm::Type *VectorElementTy = CGM.getTypes().ConvertType(EQT);
   llvm::Type *VectorElementPtrToTy = VectorElementTy->getPointerTo();
-  
+
   llvm::Value *CastToPointerElement =
     Builder.CreateBitCast(VectorAddress,
                           VectorElementPtrToTy, "conv.ptr.element");
-  
+
   const llvm::Constant *Elts = LV.getExtVectorElts();
   unsigned ix = getAccessedFieldNo(0, Elts);
-  
+
   llvm::Value *VectorBasePtrPlusIx =
     Builder.CreateInBoundsGEP(CastToPointerElement,
                               llvm::ConstantInt::get(SizeTy, ix), "add.ptr");
-  
+
   return VectorBasePtrPlusIx;
 }
 
@@ -2452,8 +2452,8 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E,
   llvm::Value *Idx = EmitScalarExpr(E->getIdx());
   if (getLangOpts().OpenMP)
     if (llvm::Value *LowerBound = CGM.OpenMPSupport.getOpenMPKernelArgRange(E)) {
-      E->dump();
-      LowerBound->dump();
+      // Emit a substraction by the lower bound because the index is used to
+      // access a partitioned array
       llvm::errs() << "generate substraction by lower bound\n";
       Idx = Builder.CreateSub(Idx, LowerBound);
     }
