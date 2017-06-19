@@ -879,7 +879,6 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
        I != E; ++I) {
 
     const VarDecl *VD = cast<VarDecl>(cast<DeclRefExpr>(*I)->getDecl());
-    QualType QTy = (*I)->getType();
 
     // Initialize arguments
     std::vector<llvm::Type *> FuncTy_args;
@@ -900,7 +899,8 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
                             VD->getNameAsString() +
                             std::to_string(info.Identifier);
 
-    llvm::errs() << RedFnName << "\n";
+    if (verbose)
+      llvm::errs() << RedFnName << "\n";
 
     llvm::Function *RedFn = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, RedFnName, mod);
@@ -911,25 +911,22 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     CGF.EnsureInsertPoint();
 
     // Generate useful type and constant
-    llvm::PointerType *PointerTy_4 =
+    llvm::PointerType *PointerTy_Int8 =
         llvm::PointerType::get(CGF.Builder.getInt8Ty(), 0);
-    llvm::PointerType *PointerTy_190 =
+    llvm::PointerType *PointerTy_Int32 =
         llvm::PointerType::get(CGF.Builder.getInt32Ty(), 0);
 
-    // Generate useful type and constant
     llvm::ConstantInt *const_int32_0 = llvm::ConstantInt::get(
         getLLVMContext(), llvm::APInt(32, llvm::StringRef("0"), 10));
-    llvm::ConstantInt *const_int64_0 = llvm::ConstantInt::get(
-        mod->getContext(), llvm::APInt(64, llvm::StringRef("0"), 10));
-    llvm::ConstantInt *const_int32_4 = llvm::ConstantInt::get(
-        mod->getContext(), llvm::APInt(32, llvm::StringRef("4"), 10));
 
-    llvm::ConstantPointerNull *const_ptr_256 =
-        llvm::ConstantPointerNull::get(PointerTy_4);
+    llvm::ConstantPointerNull *const_ptr_null =
+        llvm::ConstantPointerNull::get(PointerTy_Int8);
 
-    std::vector<llvm::Constant *> const_ptr_277_indices;
-    const_ptr_277_indices.push_back(const_int64_0);
-    const_ptr_277_indices.push_back(const_int64_0);
+    // Find the bit size
+    QualType VarType = VD->getType();
+    int32_t SizeInByte = getContext().getTypeSize(VarType) / 8;
+    llvm::ConstantInt *const_int32_typeSizeIntByte =
+        llvm::ConstantInt::get(CGF.Builder.getInt32Ty(), SizeInByte);
 
     // Allocate and load compulsry JNI arguments
     llvm::Function::arg_iterator args = RedFn->arg_begin();
@@ -943,52 +940,55 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     args++;
 
     llvm::LoadInst *ptr_env = CGF.Builder.CreateLoad(alloca_env, "");
-    llvm::LoadInst *ptr_270 = CGF.Builder.CreateLoad(ptr_env, "");
+    llvm::LoadInst *ptr_ptr_env = CGF.Builder.CreateLoad(ptr_env, "");
 
-    llvm::Value *ptr_271 =
-        CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_270, 0, 184);
-    llvm::LoadInst *ptr_272 = CGF.Builder.CreateLoad(ptr_271, "");
-    llvm::LoadInst *ptr_273 = CGF.Builder.CreateLoad(alloca_env, "");
+    llvm::Value *ptr_gep_getelement =
+        CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 184);
+    llvm::LoadInst *ptr_fn_getelement =
+        CGF.Builder.CreateLoad(ptr_gep_getelement, "");
+
+    llvm::Value *ptr_gep_releaseelement =
+        CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 192);
+    llvm::LoadInst *ptr_fn_releaseelement =
+        CGF.Builder.CreateLoad(ptr_gep_releaseelement, "");
+
+    llvm::Value *ptr_gep_newbytearray =
+        CGF.Builder.CreateConstGEP2_32(nullptr, ptr_ptr_env, 0, 176);
+    llvm::LoadInst *ptr_fn_newbytearray =
+        CGF.Builder.CreateLoad(ptr_gep_newbytearray, "");
 
     // Allocate, load and cast the first operand
     llvm::AllocaInst *alloca_arg1 = CGF.Builder.CreateAlloca(PointerTy_jobject);
     CGF.Builder.CreateStore(args, alloca_arg1);
 
-    llvm::LoadInst *ptr_274 = CGF.Builder.CreateLoad(alloca_arg1, "");
+    llvm::LoadInst *ptr_arg1 = CGF.Builder.CreateLoad(alloca_arg1, "");
     std::vector<llvm::Value *> ptr_275_params;
-    ptr_275_params.push_back(ptr_273);
-    ptr_275_params.push_back(ptr_274);
-    ptr_275_params.push_back(const_ptr_256);
-    llvm::CallInst *ptr_275 = CGF.Builder.CreateCall(ptr_272, ptr_275_params);
+    ptr_275_params.push_back(ptr_env);
+    ptr_275_params.push_back(ptr_arg1);
+    ptr_275_params.push_back(const_ptr_null);
+    llvm::CallInst *ptr_275 =
+        CGF.Builder.CreateCall(ptr_fn_getelement, ptr_275_params);
 
-    llvm::Value *ptr_265 = CGF.Builder.CreateBitCast(ptr_275, PointerTy_190);
+    llvm::Value *ptr_265 = CGF.Builder.CreateBitCast(ptr_275, PointerTy_Int32);
     llvm::Value *ptr_265_3 = CGF.Builder.CreateLoad(ptr_265);
     llvm::Value *ptr_265_3_cast =
         CGF.Builder.CreateBitCast(ptr_265_3, CGF.Builder.getInt32Ty());
     args++;
 
     // Allocate, load and cast the second operand
-    llvm::LoadInst *ptr_env_2 = CGF.Builder.CreateLoad(alloca_env, "");
-    llvm::LoadInst *ptr_270_2 = CGF.Builder.CreateLoad(ptr_env_2, "");
-
-    llvm::Value *ptr_271_2 =
-        CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_270_2, 0, 184);
-    llvm::LoadInst *ptr_272_2 = CGF.Builder.CreateLoad(ptr_271_2, "");
-    llvm::LoadInst *ptr_273_2 = CGF.Builder.CreateLoad(alloca_env, "");
-
     llvm::AllocaInst *alloca_arg2 = CGF.Builder.CreateAlloca(PointerTy_jobject);
     CGF.Builder.CreateStore(args, alloca_arg2);
 
-    llvm::LoadInst *ptr_274_1 = CGF.Builder.CreateLoad(alloca_arg2, "");
+    llvm::LoadInst *ptr_arg2 = CGF.Builder.CreateLoad(alloca_arg2, "");
     std::vector<llvm::Value *> ptr_275_1_params;
-    ptr_275_1_params.push_back(ptr_273_2);
-    ptr_275_1_params.push_back(ptr_274_1);
-    ptr_275_1_params.push_back(const_ptr_256);
+    ptr_275_1_params.push_back(ptr_env);
+    ptr_275_1_params.push_back(ptr_arg2);
+    ptr_275_1_params.push_back(const_ptr_null);
     llvm::CallInst *ptr_275_1 =
-        CGF.Builder.CreateCall(ptr_272_2, ptr_275_1_params);
+        CGF.Builder.CreateCall(ptr_fn_getelement, ptr_275_1_params);
 
     llvm::Value *ptr_265_1 =
-        CGF.Builder.CreateBitCast(ptr_275_1, PointerTy_190);
+        CGF.Builder.CreateBitCast(ptr_275_1, PointerTy_Int32);
     llvm::Value *ptr_265_2 = CGF.Builder.CreateLoad(ptr_265_1);
     llvm::Value *ptr_265_2_cast =
         CGF.Builder.CreateBitCast(ptr_265_2, CGF.Builder.getInt32Ty());
@@ -1046,62 +1046,44 @@ void CodeGenFunction::GenerateReductionKernel(const OMPReductionClause &C,
     // Protect arg 1
 
     {
-      llvm::LoadInst *ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value *ptr_270 =
-          CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_xx, 0, 192);
-      llvm::LoadInst *ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
-
       std::vector<llvm::Value *> void_272_params;
       void_272_params.push_back(ptr_env);
-      void_272_params.push_back(ptr_274);
+      void_272_params.push_back(ptr_arg1);
       void_272_params.push_back(ptr_275);
       void_272_params.push_back(const_int32_0);
-      llvm::CallInst *void_272 =
-          CGF.Builder.CreateCall(ptr_271, void_272_params);
+      CGF.Builder.CreateCall(ptr_fn_releaseelement, void_272_params);
     }
 
     // Protect arg 2
 
     {
-      llvm::LoadInst *ptr_xx = CGF.Builder.CreateLoad(ptr_env, "");
-      llvm::Value *ptr_270 =
-          CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_xx, 0, 192);
-      llvm::LoadInst *ptr_271 = CGF.Builder.CreateLoad(ptr_270, "");
-
       std::vector<llvm::Value *> void_272_params;
       void_272_params.push_back(ptr_env);
-      void_272_params.push_back(ptr_274_1);
+      void_272_params.push_back(ptr_arg2);
       void_272_params.push_back(ptr_275_1);
       void_272_params.push_back(const_int32_0);
-      llvm::CallInst *void_272 =
-          CGF.Builder.CreateCall(ptr_271, void_272_params);
+      CGF.Builder.CreateCall(ptr_fn_releaseelement, void_272_params);
     }
 
     // Cast back the result to bit array
-    llvm::LoadInst *ptr_27422 = CGF.Builder.CreateLoad(ptr_env, "");
-    llvm::Value *ptr_275_2 =
-        CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_27422, 0, 176);
-    llvm::LoadInst *ptr_276 = CGF.Builder.CreateLoad(ptr_275_2, "");
     std::vector<llvm::Value *> ptr_277_params;
     ptr_277_params.push_back(ptr_env);
-    ptr_277_params.push_back(
-        const_int32_4); // FIXME: That should the size in byte of the element
-    llvm::CallInst *ptr_277 = CGF.Builder.CreateCall(ptr_276, ptr_277_params);
+    ptr_277_params.push_back(const_int32_typeSizeIntByte);
+    llvm::CallInst *ptr_277 =
+        CGF.Builder.CreateCall(ptr_fn_newbytearray, ptr_277_params);
 
-    llvm::LoadInst *ptr_278 = CGF.Builder.CreateLoad(ptr_env, "");
     llvm::Value *ptr_279 =
-        CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_278, 0, 208);
+        CGF.Builder.CreateConstInBoundsGEP2_32(nullptr, ptr_ptr_env, 0, 208);
     llvm::LoadInst *ptr_280 = CGF.Builder.CreateLoad(ptr_279, "");
     llvm::Value *ptr_res_cast =
-        CGF.Builder.CreateBitCast(alloca_res, PointerTy_4, "");
+        CGF.Builder.CreateBitCast(alloca_res, PointerTy_Int8, "");
     std::vector<llvm::Value *> void_281_params;
     void_281_params.push_back(ptr_env);
     void_281_params.push_back(ptr_277);
     void_281_params.push_back(const_int32_0);
-    void_281_params.push_back(
-        const_int32_4); // FIXME: That should the size in byte of the element
+    void_281_params.push_back(const_int32_typeSizeIntByte);
     void_281_params.push_back(ptr_res_cast);
-    llvm::CallInst *void_281 = CGF.Builder.CreateCall(ptr_280, void_281_params);
+    CGF.Builder.CreateCall(ptr_280, void_281_params);
 
     CGF.Builder.CreateRet(ptr_277);
   }
