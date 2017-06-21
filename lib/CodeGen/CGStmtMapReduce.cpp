@@ -816,7 +816,9 @@ public:
          ++I) {
       if ((*I)->getType()->isPointerType() ||
           (*I)->getType()->isReferenceType())
-        current_use = Def;
+        current_use = UseDef;
+      else
+        current_use = Use;
       TraverseStmt(*I);
       current_use = backup;
     }
