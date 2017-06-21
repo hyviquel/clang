@@ -576,7 +576,7 @@ public:
       break;
     case OMPC_MAP_release:
     case OMPC_MAP_delete:
-      llvm::errs() << " --> euuh something not supported\n";
+      llvm::errs() << "ERROR OmpCloud: euuh something not supported\n";
       exit(1);
     }
 
@@ -1335,8 +1335,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::Value *alloca_cnt_bound;
 
   if (info.CounterInfo.size() > 1) {
-    if (verbose)
-      llvm::errs() << "Do not support more than 1 iteration index for now.";
+    llvm::errs() << "ERROR OmpCloud: Do not support more than 1 iteration index for now.";
     exit(1);
   }
 
@@ -1723,8 +1722,7 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     CGF.Builder.CreateRet(ptr_tuple3);
   } else {
     // TODO: Construct and return Tuples in generic way
-    if (verbose)
-      llvm::errs() << "Need support for more than 3 outputs\n";
+    llvm::errs() << "ERROR OmpCloud: Need support for more than 3 outputs\n";
     exit(1);
   }
 }
