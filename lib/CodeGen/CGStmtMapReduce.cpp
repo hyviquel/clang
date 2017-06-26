@@ -768,6 +768,15 @@ public:
     }
   }
 
+  bool TraverseVarDecl(VarDecl *VD) {
+    UseKind backup = current_use; // backup the usage
+    VisitVarDecl(VD);
+    current_use = Use;
+    TraverseStmt(VD->getInit());
+    current_use = backup;
+    return true;
+  }
+
   bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
     UseKind backup = current_use; // backup the usage
 

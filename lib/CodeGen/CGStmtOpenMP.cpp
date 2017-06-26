@@ -2449,8 +2449,16 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         break;
       }
 
-      if(isSparkTarget)
+      if (isSparkTarget) {
         EmitSparkJob();
+        static bool alreadyOneSparkKernel = false;
+        if (alreadyOneSparkKernel) {
+          llvm::errs() << "ERROR OmpCloud: Only a unique kernel can be "
+                          "offloaded to the cloud for now\n";
+          exit(1);
+        }
+        alreadyOneSparkKernel = true;
+      }
 
       if (isTargetMode)
         // at the end of the target region, set next label as the finishing case
