@@ -2453,9 +2453,8 @@ void CodeGenFunction::EmitOMPDirectiveWithTarget(OpenMPDirectiveKind DKind,
         EmitSparkJob();
         static bool alreadyOneSparkKernel = false;
         if (alreadyOneSparkKernel) {
-          llvm::errs() << "ERROR OmpCloud: Only a unique kernel can be "
-                          "offloaded to the cloud for now\n";
-          exit(1);
+          llvm::errs() << "WARNING OmpCloud: Only 1 kernel can be offloaded"
+                          " to the cloud for now\n";
         }
         alreadyOneSparkKernel = true;
       }
