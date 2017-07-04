@@ -1646,9 +1646,8 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
 
   llvm::SmallVector<llvm::Value *, 8> OutputsToReturn;
 
-  for (auto it = InOutputsToRelease.begin(); it != InOutputsToRelease.end();
-       ++it) {
-    // ReleaseCritical
+  for (auto it = OutputsToRelease.begin(); it != OutputsToRelease.end(); ++it) {
+    // ReleaseByteArrayElements
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
     params_release.push_back(it->first);
@@ -1659,8 +1658,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     OutputsToReturn.push_back(it->first);
   }
 
-  for (auto it = OutputsToRelease.begin(); it != OutputsToRelease.end(); ++it) {
-    // ReleaseByteArrayElements
+  for (auto it = InOutputsToRelease.begin(); it != InOutputsToRelease.end();
+       ++it) {
+    // ReleaseCritical
     std::vector<llvm::Value *> params_release;
     params_release.push_back(ptr_env);
     params_release.push_back(it->first);
