@@ -302,7 +302,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto &TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
-  SPARK_FILE << "    // Read each input from cloud-based filesystem\n";
+  SPARK_FILE << "    // Read each input from the storage\n";
   for (auto it = IndexMap.begin(); it != IndexMap.end(); ++it) {
     const ValueDecl *VD = it->first;
     int OffloadId = IndexMap[VD];
@@ -687,7 +687,7 @@ void CodeGenFunction::EmitSparkOutput(llvm::raw_fd_ostream &SPARK_FILE) {
   auto &IndexMap = CGM.OpenMPSupport.getLastOffloadingMapVarsIndex();
   auto &TypeMap = CGM.OpenMPSupport.getLastOffloadingMapVarsType();
 
-  SPARK_FILE << "    // Get the results back and write them in the HDFS\n";
+  SPARK_FILE << "    // Write the results back into the storage\n";
 
   for (auto it = IndexMap.begin(); it != IndexMap.end(); ++it) {
     const ValueDecl *VD = it->first;
