@@ -681,6 +681,12 @@ public:
         return true;
       }
 
+      if(VD->hasGlobalStorage()) {
+        if (verbose)
+          llvm::errs() << "is global\n";
+        return true;
+      }
+
       int MapType = CGM.OpenMPSupport.getMapType(VD);
       if (MapType == -1) {
         // FIXME: That should be detected before
