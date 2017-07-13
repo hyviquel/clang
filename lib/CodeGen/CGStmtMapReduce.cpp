@@ -577,7 +577,7 @@ public:
     case OMPC_MAP_release:
     case OMPC_MAP_delete:
       llvm::errs() << "ERROR OmpCloud: euuh something not supported\n";
-      exit(1);
+      exit(EXIT_FAILURE);
     }
 
     assert(BaseAddrs.size() == Vars.size() &&
@@ -681,14 +681,14 @@ public:
         return true;
       }
 
-      if(VD->hasGlobalStorage()) {
-        if (verbose)
-          llvm::errs() << "is global\n";
-        return true;
-      }
-
       int MapType = CGM.OpenMPSupport.getMapType(VD);
       if (MapType == -1) {
+        if (VD->hasGlobalStorage()) {
+          if (verbose)
+            llvm::errs() << "is global\n";
+          return true;
+        }
+
         // FIXME: That should be detected before
         if (verbose)
           llvm::errs() << "assume input (not in clause)";
@@ -750,6 +750,10 @@ public:
 
       if (verbose)
         llvm::errs() << "\n";
+
+      if (VD->hasGlobalStorage() && verbose)
+        llvm::errs() << "Warning OmpCloud: " << VD->getName()
+                     << " is global and in the map clause\n";
     }
 
     return true;
@@ -1350,8 +1354,9 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   llvm::Value *alloca_cnt_bound;
 
   if (info.CounterInfo.size() > 1) {
-    llvm::errs() << "ERROR OmpCloud: Do not support more than 1 iteration index for now.";
-    exit(1);
+    llvm::errs() << "ERROR OmpCloud: Do not support more than 1 iteration "
+                    "index for now.";
+    exit(EXIT_FAILURE);
   }
 
   for (auto it = info.CounterUse.begin(); it != info.CounterUse.end(); ++it) {
@@ -1738,6 +1743,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
   } else {
     // TODO: Construct and return Tuples in generic way
     llvm::errs() << "ERROR OmpCloud: Need support for more than 3 outputs\n";
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 }
