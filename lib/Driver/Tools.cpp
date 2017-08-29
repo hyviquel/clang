@@ -396,8 +396,8 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
             << "\n"
             << "version := \"0.2.0\"\n"
             << "\n"
-            << "scalaVersion := \"2.11.8\"\n"
-            << "val sparkVersion = \"2.1.0\"\n"
+            << "scalaVersion := \"2.11.11\"\n"
+            << "val sparkVersion = \"2.2.0\"\n"
             << "\n"
             << "libraryDependencies += \"org.apache.spark\" %% \"spark-core\" % sparkVersion % \"provided\"\n"
             << "libraryDependencies += \"org.apache.spark\" %% \"spark-sql\" % sparkVersion % \"provided\"\n"
@@ -413,7 +413,7 @@ static void AddScalaCompilation(const ToolChain &TC, Compilation &C,
     exit(1);
   }
 
-  PLUGINS_SBT << "addSbtPlugin(\"com.eed3si9n\" % \"sbt-assembly\" % \"0.14.3\")";
+  PLUGINS_SBT << "addSbtPlugin(\"com.eed3si9n\" % \"sbt-assembly\" % \"0.14.5\")";
 
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("sbt"));
   ArgStringList ExtractArgs;
