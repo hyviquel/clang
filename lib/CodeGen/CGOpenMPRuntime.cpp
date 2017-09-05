@@ -4668,25 +4668,6 @@ public:
   }
 }; // class CGOpenMPRuntime_NVPTX
 
-/// Target specific runtime hacks
-class CGOpenMPRuntime_Spark: public CGOpenMPRuntime {
-
-public:
-
-  CGOpenMPRuntime_Spark(CodeGenModule &CGM)
-       : CGOpenMPRuntime(CGM) {
-
-  }
-
-  bool requiresMicroTaskForTeams(){
-    return false;
-  }
-  bool requiresMicroTaskForParallel(){
-    return false;
-  }
-
-}; // class CGOpenMPRuntime_Spark
-
 ///===---------------
 ///
 /// Create runtime for the target used in the Module
@@ -4697,12 +4678,7 @@ CGOpenMPRuntime *CodeGen::CreateOpenMPRuntime(CodeGenModule &CGM) {
 
   switch (CGM.getTarget().getTriple().getArch()) {
   default:
-    switch (CGM.getTarget().getTriple().getEnvironment()) {
-    default:
-      return new CGOpenMPRuntime(CGM);
-    case llvm::Triple::Spark:
-      return new CGOpenMPRuntime_Spark(CGM);
-    }
+    return new CGOpenMPRuntime(CGM);
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
     return new CGOpenMPRuntime_NVPTX(CGM);
