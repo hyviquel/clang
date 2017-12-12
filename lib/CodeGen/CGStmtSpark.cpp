@@ -346,7 +346,7 @@ void CodeGenFunction::EmitSparkInput(llvm::raw_fd_ostream &SPARK_FILE) {
                  << ")\n";
   }
 
-  SPARK_FILE << "    val _parallelism = info.getParallelism\n";
+  SPARK_FILE << "    val _parallelism = info.getParallelism * info.ratio\n";
 
   SPARK_FILE << "\n";
 }
@@ -380,15 +380,17 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     // FIXME: Should be the schedule if there is one defined in the clause
     SPARK_FILE << "    val blockSize_" << MappingId << "_" << NbIndex
                << " = ((bound_" << MappingId << "_" << NbIndex
-               << ").toFloat/_parallelism/info.ratio).floor.toLong\n";
+               << ").toFloat/_parallelism).floor.toLong\n";
 
-    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (";
+    SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex
+               << " = info.sc.parallelize(";
     MappingPrinter.PrintExpr(Init);
     SPARK_FILE << ".toLong to bound_" << MappingId << "_" << NbIndex;
     if (BO->getOpcode() == BO_LT || BO->getOpcode() == BO_GT) {
       SPARK_FILE << "-1";
     }
-    SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex << ")";
+    SPARK_FILE << " by blockSize_" << MappingId << "_" << NbIndex
+               << ", _parallelism.toInt).toDS()";
     SPARK_FILE << " // Index " << VarCnt->getName() << "\n";
 
     if (verbose) {
@@ -475,7 +477,7 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     }
     SPARK_FILE << ")";
   }
-  SPARK_FILE << "}.toDS()\n"; // FIXME: Inverse with more indexes
+  SPARK_FILE << "}\n"; // FIXME: Inverse with more indexes
 
   SPARK_FILE << "    // 2 - Perform Map operations\n";
   SPARK_FILE << "    val mapres_" << MappingId << " = index_" << MappingId
