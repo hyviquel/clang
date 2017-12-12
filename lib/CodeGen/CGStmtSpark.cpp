@@ -377,9 +377,10 @@ void CodeGenFunction::EmitSparkMapping(llvm::raw_fd_ostream &SPARK_FILE,
     SPARK_FILE << "    val bound_" << MappingId << "_" << NbIndex << " = ";
     MappingPrinter.PrintExpr(Check);
     SPARK_FILE << ".toLong\n";
+    // FIXME: Should be the schedule if there is one defined in the clause
     SPARK_FILE << "    val blockSize_" << MappingId << "_" << NbIndex
                << " = ((bound_" << MappingId << "_" << NbIndex
-               << ").toFloat/_parallelism).floor.toLong\n";
+               << ").toFloat/_parallelism/info.ratio).floor.toLong\n";
 
     SPARK_FILE << "    val index_" << MappingId << "_" << NbIndex << " = (";
     MappingPrinter.PrintExpr(Init);
