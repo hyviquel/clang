@@ -39,6 +39,7 @@
 
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/Analysis/DefUse.h"
 
 #define VERBOSE 1
 
@@ -483,23 +484,16 @@ bool CodeGenFunction::isNotSupportedLoopForm(Stmt *S, OpenMPDirectiveKind Kind,
   return false;
 }
 
-/// A StmtVisitor that propagates the raw counts through the AST and
-/// records the count at statements where the value may change.
-class FindKernelArguments : public RecursiveASTVisitor<FindKernelArguments> {
-
+class FindKernelArguments : public defuse::DefUseHelper {
 private:
-  ArraySubscriptExpr *CurrArrayExpr;
-  Expr *CurrArrayIndexExpr;
+  const ArraySubscriptExpr *CurrArrayExpr;
+  const Expr *CurrArrayIndexExpr;
 
   llvm::DenseMap<const VarDecl *, llvm::SmallVector<const Expr *, 8>>
       MapVarToExpr;
   llvm::SmallSet<const VarDecl *, 8> Inputs;
   llvm::SmallSet<const VarDecl *, 8> Outputs;
   llvm::SmallSet<const VarDecl *, 8> InputsOutputs;
-
-  enum UseKind { Use, Def, UseDef };
-
-  UseKind current_use;
 
 public:
   CodeGenModule &CGM;
@@ -513,11 +507,11 @@ public:
       : CGM(CGM), Info(CGM.OpenMPSupport.getCurrentSparkMappingInfo()) {
     verbose = VERBOSE;
     CurrArrayExpr = NULL;
-    current_use = UseKind::UseDef;
+    current_use = defuse::DefUseNode::UseDef;
   }
 
   void Explore(Stmt *S) {
-    TraverseStmt(S);
+    VisitStmt(S);
 
     llvm::errs() << "Inputs =";
     for (auto In : Inputs) {
@@ -541,8 +535,117 @@ public:
     }
     llvm::errs() << "\n";
   }
+  
+  void HandleDeclRefExpr(const DeclRefExpr *D) {
+    if (const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
+      if (verbose)
+        llvm::errs() << ">>> Found RefExpr = " << VD->getName() << " --> ";
 
-  bool VisitOMPMapClause(const OMPMapClause *C) {
+      if (Info->CounterInfo.find(VD) != Info->CounterInfo.end()) {
+        Info->CounterUse[VD].push_back(D);
+        if (verbose)
+          llvm::errs() << "is cnt\n";
+        return;
+      }
+
+      if (std::find(LocalVars.begin(), LocalVars.end(), VD) !=
+          LocalVars.end()) {
+        if (verbose)
+          llvm::errs() << "is local\n";
+        return;
+      }
+
+      int MapType = CGM.OpenMPSupport.getMapType(VD);
+      if (MapType == -1) {
+        if (VD->hasGlobalStorage()) {
+          if (verbose)
+            llvm::errs() << "is global\n";
+          return;
+        }
+
+        // FIXME: That should be detected before
+        if (verbose)
+          llvm::errs() << "assume input (not in clause)";
+        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_TO);
+        MapType = CGM.OpenMPSupport.getMapType(VD);
+      }
+
+      bool currInput =
+          std::find(Inputs.begin(), Inputs.end(), VD) != Inputs.end();
+      bool currOutput =
+          std::find(Outputs.begin(), Outputs.end(), VD) != Outputs.end();
+      bool currInputOutput =
+          std::find(InputsOutputs.begin(), InputsOutputs.end(), VD) !=
+          InputsOutputs.end();
+
+      MapVarToExpr[VD].push_back(D);
+
+      if (current_use == defuse::DefUseNode::Use) {
+        if (verbose)
+          llvm::errs() << " is Use";
+        if (currInputOutput) {
+          ;
+        } else if (currOutput) {
+          Outputs.erase(VD);
+          InputsOutputs.insert(VD);
+        } else {
+          Inputs.insert(VD);
+        }
+      } else if (current_use == defuse::DefUseNode::Def) {
+        if (verbose)
+          llvm::errs() << " is Def";
+        if (currInputOutput) {
+          ;
+        } else if (currInput) {
+          Inputs.erase(VD);
+          InputsOutputs.insert(VD);
+        } else {
+          Outputs.insert(VD);
+        }
+      } else if (current_use == defuse::DefUseNode::UseDef) {
+        if (verbose)
+          llvm::errs() << " is UseDef";
+        Inputs.erase(VD);
+        Outputs.erase(VD);
+        InputsOutputs.insert(VD);
+      } else {
+        if (verbose)
+          llvm::errs() << " is Nothing ???";
+      }
+
+      // When variables are not fully broadcasted to the workers (internal
+      // data map), index expressions are marked for codegen modification
+      // if(CurrArrayExpr)
+      if (const CEANIndexExpr *Range = Info->RangedVar[VD]) {
+        Info->RangedArrayAccess[VD].push_back(CurrArrayExpr);
+        if (verbose)
+          llvm::errs() << " and ranged";
+      }
+
+      if (verbose)
+        llvm::errs() << "\n";
+
+      if (VD->hasGlobalStorage() && verbose)
+        llvm::errs() << "Warning OmpCloud: " << VD->getName()
+                     << " is global and in the map clause\n";
+    }
+  }
+
+  void HandleDeclStmt(const DeclStmt *DS) {
+    for (DeclStmt::const_decl_iterator I = DS->decl_begin(), E = DS->decl_end();
+        I != E; I++)
+    {
+      if (VarDecl* VD = dyn_cast<VarDecl> (*I)) {
+        defuse::DefUseNode::UseKind backup = current_use; // backup the usage
+        LocalVars.push_back(VD);
+        current_use = defuse::DefUseNode::Use;
+        Visit(VD->getInit());
+        current_use = backup;
+      }
+    }
+  }
+  
+  void VisitOMPMapClause(const OMPMapClause *C) {
     if (verbose)
       llvm::errs() << "PASS THROUGH MAP CLAUSE\n";
 
@@ -613,12 +716,19 @@ public:
 
       assert(RefExpr && "Unexpected expression in the map clause");
     }
-
-    return true;
   }
+  
+  void HandleOMPTargetDataDirective(const OMPTargetDataDirective *S) {
+    llvm::errs() << "OLA\n";
+    if (verbose)
+      llvm::errs() << "PASS THROUGH TARGET DATA\n";
 
-  bool TraverseOMPTargetDataDirective(OMPTargetDataDirective *S) {
-    WalkUpFromOMPTargetDataDirective(S);
+    for (ArrayRef<OMPClause *>::iterator I = S->clauses().begin(),
+                                         E = S->clauses().end();
+         I != E; ++I)
+      if (const OMPMapClause *C = static_cast<OMPMapClause *>(*I))
+        VisitOMPMapClause(C);
+    
     Stmt *Body = S->getAssociatedStmt();
 
     if (CapturedStmt *CS = dyn_cast_or_null<CapturedStmt>(Body))
@@ -638,239 +748,22 @@ public:
         SkippedContainers = true;
     }
 
-    TraverseStmt(Body);
-
-    return true;
+    Visit(Body);
   }
 
-  bool VisitOMPTargetDataDirective(OMPTargetDataDirective *S) {
-    if (verbose)
-      llvm::errs() << "PASS THROUGH TARGET DATA\n";
-
-    for (ArrayRef<OMPClause *>::iterator I = S->clauses().begin(),
-                                         E = S->clauses().end();
-         I != E; ++I)
-      if (const OMPMapClause *C = static_cast<OMPMapClause *>(*I))
-        VisitOMPMapClause(C);
-
-    return true;
-  }
-
-  bool VisitVarDecl(VarDecl *VD) {
-    LocalVars.push_back(VD);
-    return true;
-  }
-
-  bool VisitDeclRefExpr(DeclRefExpr *D) {
-
-    if (const VarDecl *VD = dyn_cast<VarDecl>(D->getDecl())) {
-      if (verbose)
-        llvm::errs() << ">>> Found RefExpr = " << VD->getName() << " --> ";
-
-      if (Info->CounterInfo.find(VD) != Info->CounterInfo.end()) {
-        Info->CounterUse[VD].push_back(D);
-        if (verbose)
-          llvm::errs() << "is cnt\n";
-        return true;
-      }
-
-      if (std::find(LocalVars.begin(), LocalVars.end(), VD) !=
-          LocalVars.end()) {
-        if (verbose)
-          llvm::errs() << "is local\n";
-        return true;
-      }
-
-      int MapType = CGM.OpenMPSupport.getMapType(VD);
-      if (MapType == -1) {
-        if (VD->hasGlobalStorage()) {
-          if (verbose)
-            llvm::errs() << "is global\n";
-          return true;
-        }
-
-        // FIXME: That should be detected before
-        if (verbose)
-          llvm::errs() << "assume input (not in clause)";
-        CGM.OpenMPSupport.addOffloadingMapVariable(VD, OMP_TGT_MAPTYPE_TO);
-        MapType = CGM.OpenMPSupport.getMapType(VD);
-      }
-
-      bool currInput =
-          std::find(Inputs.begin(), Inputs.end(), VD) != Inputs.end();
-      bool currOutput =
-          std::find(Outputs.begin(), Outputs.end(), VD) != Outputs.end();
-      bool currInputOutput =
-          std::find(InputsOutputs.begin(), InputsOutputs.end(), VD) !=
-          InputsOutputs.end();
-
-      MapVarToExpr[VD].push_back(D);
-
-      if (current_use == Use) {
-        if (verbose)
-          llvm::errs() << " is Use";
-        if (currInputOutput) {
-          ;
-        } else if (currOutput) {
-          Outputs.erase(VD);
-          InputsOutputs.insert(VD);
-        } else {
-          Inputs.insert(VD);
-        }
-      } else if (current_use == Def) {
-        if (verbose)
-          llvm::errs() << " is Def";
-        if (currInputOutput) {
-          ;
-        } else if (currInput) {
-          Inputs.erase(VD);
-          InputsOutputs.insert(VD);
-        } else {
-          Outputs.insert(VD);
-        }
-      } else if (current_use == UseDef) {
-        if (verbose)
-          llvm::errs() << " is UseDef";
-        Inputs.erase(VD);
-        Outputs.erase(VD);
-        InputsOutputs.insert(VD);
-      } else {
-        if (verbose)
-          llvm::errs() << " is Nothing ???";
-      }
-
-      // When variables are not fully broadcasted to the workers (internal
-      // data map), index expressions are marked for codegen modification
-      // if(CurrArrayExpr)
-      if (const CEANIndexExpr *Range = Info->RangedVar[VD]) {
-        Info->RangedArrayAccess[VD].push_back(CurrArrayExpr);
-        if (verbose)
-          llvm::errs() << " and ranged";
-      }
-
-      if (verbose)
-        llvm::errs() << "\n";
-
-      if (VD->hasGlobalStorage() && verbose)
-        llvm::errs() << "Warning OmpCloud: " << VD->getName()
-                     << " is global and in the map clause\n";
-    }
-
-    return true;
-  }
-
-  // A workaround to allow a redefinition of Traverse...Operator.
-  bool TraverseStmt(Stmt *S) {
-    if (!S)
-      return true;
-
-    switch (S->getStmtClass()) {
-    case Stmt::CompoundAssignOperatorClass: {
-      CompoundAssignOperator *CAO = cast<CompoundAssignOperator>(S);
-      return TraverseCompoundAssignOperator(CAO);
-    }
-    case Stmt::UnaryOperatorClass:
-      return TraverseUnaryOperator(cast<UnaryOperator>(S));
-    case Stmt::BinaryOperatorClass:
-      return TraverseBinaryOperator(cast<BinaryOperator>(S));
-    default:
-      return RecursiveASTVisitor::TraverseStmt(S);
-    }
-  }
-
-  bool TraverseVarDecl(VarDecl *VD) {
-    UseKind backup = current_use; // backup the usage
-    VisitVarDecl(VD);
-    current_use = Use;
-    TraverseStmt(VD->getInit());
-    current_use = backup;
-    return true;
-  }
-
-  bool TraverseArraySubscriptExpr(ArraySubscriptExpr *A) {
-    UseKind backup = current_use; // backup the usage
+  void HandleArraySubscriptExpr(const ArraySubscriptExpr *A) {
+    defuse::DefUseNode::UseKind backup = current_use; // backup the usage
 
     CurrArrayExpr = A;
     CurrArrayIndexExpr = A->getIdx();
-    TraverseStmt(A->getBase());
+    Visit(A->getBase());
 
     CurrArrayExpr = nullptr;
     CurrArrayIndexExpr = nullptr;
-    current_use = Use;
-    TraverseStmt(A->getIdx());
+    current_use = defuse::DefUseNode::Use;
+    Visit(A->getIdx());
 
     current_use = backup; // write back the usage to the current usage
-    return true;
-  }
-
-  bool TraverseBinaryOperator(BinaryOperator *B) {
-    UseKind backup = current_use; // backup the usage
-    if (B->isAssignmentOp()) {
-      current_use = Use;
-      TraverseStmt(B->getRHS());
-      current_use = Def;
-      TraverseStmt(B->getLHS());
-    } else {
-      TraverseStmt(B->getLHS());
-      current_use = Use;
-      TraverseStmt(B->getRHS());
-    }
-    current_use = backup; // write back the usage to the current usage
-    return true;
-  }
-
-  bool TraverseCompoundAssignOperator(CompoundAssignOperator *B) {
-    UseKind backup = current_use; // backup the usage
-    current_use = Use;
-    TraverseStmt(B->getRHS());
-    current_use = UseDef;
-    TraverseStmt(B->getLHS());
-    current_use = backup; // write back the usage to the current usage
-    return true;
-  }
-
-  bool TraverseCallExpr(CallExpr *C) {
-    UseKind backup = current_use; // backup the usage
-    for (CallExpr::arg_iterator I = C->arg_begin(), E = C->arg_end(); I != E;
-         ++I) {
-      if ((*I)->getType()->isPointerType() ||
-          (*I)->getType()->isReferenceType())
-        current_use = Use;
-      else
-        current_use = Use;
-      TraverseStmt(*I);
-      current_use = backup;
-    }
-    return true;
-  }
-
-  bool TraverseUnaryOperator(UnaryOperator *U) {
-    UseKind backup = current_use; // backup the usage
-    switch (U->getOpcode()) {
-    case UO_PostInc:
-    case UO_PostDec:
-    case UO_PreInc:
-    case UO_PreDec:
-      current_use = UseDef;
-      break;
-    case UO_Plus:
-    case UO_Minus:
-    case UO_Not:
-    case UO_LNot:
-      current_use = Use;
-      break;
-    case UO_AddrOf:
-    case UO_Deref:
-      // use the current_use
-      break;
-    default:
-      // DEBUG("Operator " << UnaryOperator::getOpcodeStr(U->getOpcode()) <<
-      // " not supported in def-use analysis");
-      break;
-    }
-    TraverseStmt(U->getSubExpr());
-    current_use = backup; // write back the usage to the current usage
-    return true;
   }
 };
 
@@ -1483,7 +1376,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     }
 
     CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
-
     args++;
   }
 
@@ -1532,7 +1424,6 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     }
 
     CGM.OpenMPSupport.addOpenMPKernelArgVar(VD, valuePtr);
-
     args++;
   }
 
@@ -1604,13 +1495,13 @@ void CodeGenFunction::GenerateMappingKernel(const OMPExecutableDirective &S) {
     // Create a separate cleanup scope for the body, in case it is not
     // a compound statement.
     RunCleanupsScope BodyScope(CGF);
-
+ 
     // Generate kernel code
     if (const CompoundStmt *S = dyn_cast<CompoundStmt>(Body))
       CGF.EmitCompoundStmtWithoutScope(*S);
     else
       CGF.EmitStmt(Body);
-
+      
     CGM.OpenMPSupport.stopSparkRegion();
   }
 

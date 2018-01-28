@@ -12,6 +12,7 @@ add_clang_library(clangAnalysis
   CocoaConventions.cpp
   Consumed.cpp
   CodeInjector.cpp
+  DefUse.cpp
   Dominators.cpp
   FormatString.cpp
   LiveVariables.cpp
